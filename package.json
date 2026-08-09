@@ -1,0 +1,13 @@
+{
+  "name": "film-frame",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Local film scan frame detector with TIFF support",
+  "scripts": {
+    "test": "node tests/detection.test.js"
+  },
+  "dependencies": {
+    "pako": "1.0.11",
+    "utif": "3.1.0"
+  }
+}

@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#171714" />
+    <meta
+      name="description"
+      content="在浏览器本地识别胶片扫描图的黑边，自动逐格裁切并按原图片格式导出。"
+    />
+    <title>FILM / FRAME — 胶片自动分帧</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="brand" href="#" aria-label="FILM / FRAME 首页">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>FILM <b>/</b> FRAME</span>
+      </a>
+      <div class="local-badge"><span></span>仅在本机处理</div>
+    </header>
+
+    <main>
+      <section class="intro" id="intro">
+        <p class="eyebrow">NEGATIVE CUTTING ROOM · 01</p>
+        <h1>让黑边成为<br /><em>天然的裁切线。</em></h1>
+        <p class="intro-copy">
+          批量导入不同胶片扫描图，逐份校验片轨与裁切效果。确认画面后，保持各自原格式直接导出。
+        </p>
+
+        <label class="drop-zone" id="dropZone" for="fileInput">
+          <input id="fileInput" type="file" multiple accept="image/jpeg,image/png,image/webp,image/tiff,image/x-tiff,.tif,.tiff" />
+          <span class="drop-icon" aria-hidden="true">
+            <svg viewBox="0 0 48 48" fill="none">
+              <path d="M24 33V11m0 0-8 8m8-8 8 8M9 31v6a4 4 0 0 0 4 4h22a4 4 0 0 0 4-4v-6" />
+            </svg>
+          </span>
+          <span class="drop-title">拖入一组胶片扫描图</span>
+          <span class="drop-subtitle">支持同时选择多张 · JPG / PNG / WEBP / TIF · 图片不会离开设备</span>
+        </label>
+
+        <div class="process-note" aria-label="处理流程">
+          <span><b>01</b> 导入原图</span><i></i>
+          <span><b>02</b> 黑边分帧</span><i></i>
+          <span><b>03</b> 校正导出</span>
+        </div>
+      </section>
+
+      <section class="workspace" id="workspace" hidden>
+        <div class="workspace-topline">
+          <div>
+            <p class="eyebrow">CUTTING TABLE · 02</p>
+            <h2 id="sourceName">扫描原图</h2>
+          </div>
+          <button class="text-button" id="changeFileButton" type="button">添加底片</button>
+        </div>
+
+        <section class="job-queue" aria-labelledby="jobQueueTitle">
+          <div class="job-queue-heading">
+            <span id="jobQueueTitle">底片任务</span>
+            <output id="jobQueueSummary">0 张底片</output>
+          </div>
+          <div class="job-list" id="jobList" role="list"></div>
+        </section>
+
+        <div class="work-grid">
+          <section class="viewer-panel" aria-labelledby="viewerTitle">
+            <div class="panel-head">
+              <div>
+                <span class="panel-kicker">SOURCE</span>
+                <h3 id="viewerTitle">黑边检测</h3>
+              </div>
+              <div class="viewer-tools">
+                <div class="image-meta" id="imageMeta"></div>
+                <div class="source-rotation" aria-label="原图查看角度">
+                  <button id="sourceRotateLeft" type="button" aria-label="原图向左旋转 90 度" title="向左旋转查看">↶</button>
+                  <output id="sourceRotationLabel">0°</output>
+                  <button id="sourceRotateRight" type="button" aria-label="原图向右旋转 90 度" title="向右旋转查看">↷</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="canvas-shell" id="canvasShell">
+              <canvas id="sourceCanvas" aria-label="胶片原图与检测框"></canvas>
+              <div class="scanning-line" id="scanningLine"></div>
+              <div class="empty-canvas" id="canvasMessage">正在显影…</div>
+            </div>
+
+            <div class="canvas-legend">
+              <span><i class="legend-frame"></i>已识别画格</span>
+              <span><i class="legend-selected"></i>当前画格</span>
+              <span>点击画面可选择 · 原图旋转仅影响查看</span>
+            </div>
+          </section>
+
+          <aside class="control-panel" aria-labelledby="controlTitle">
+            <div class="control-heading">
+              <div>
+                <span class="panel-kicker">DETECTION</span>
+                <h3 id="controlTitle">检测参数</h3>
+              </div>
+              <span class="result-count" id="resultCount">—</span>
+            </div>
+
+            <div class="field-group">
+              <label for="orientation">胶片排列</label>
+              <select id="orientation">
+                <option value="auto">自动判断</option>
+                <option value="vertical">纵向片条</option>
+                <option value="horizontal">横向片条</option>
+              </select>
+            </div>
+
+            <div class="field-group range-field">
+              <div class="label-row">
+                <label for="blackThreshold">黑色阈值</label>
+                <output id="blackThresholdValue" for="blackThreshold">20</output>
+              </div>
+              <input id="blackThreshold" type="range" min="18" max="110" value="20" />
+              <div class="range-labels"><span>仅纯黑</span><span>包含深灰</span></div>
+            </div>
+
+            <div class="field-group range-field">
+              <div class="label-row">
+                <label for="borderCoverage">黑边连续度</label>
+                <output id="borderCoverageValue" for="borderCoverage">72%</output>
+              </div>
+              <input id="borderCoverage" type="range" min="48" max="92" value="72" />
+              <div class="range-labels"><span>容许断点</span><span>更严格</span></div>
+            </div>
+
+            <div class="field-group range-field">
+              <div class="label-row">
+                <label for="edgeInset">向内收边</label>
+                <output id="edgeInsetValue" for="edgeInset">2 px</output>
+              </div>
+              <input id="edgeInset" type="range" min="0" max="24" value="2" />
+              <div class="range-labels"><span>保留边缘</span><span>去除黑边</span></div>
+            </div>
+
+            <button class="detect-button" id="detectButton" type="button">
+              <span>重新识别黑边</span><kbd>R</kbd>
+            </button>
+
+            <div class="detected-status" id="detectedStatus" aria-live="polite">
+              <span class="status-dot"></span>
+              <p><b>等待检测</b><small>参数修改后可重新识别</small></p>
+            </div>
+
+            <div class="frame-editor" id="frameEditor" hidden>
+              <div class="editor-title">
+                <span>画格 <b id="selectedFrameNumber">01</b></span>
+                <button id="removeFrameButton" type="button">排除此格</button>
+              </div>
+              <div class="coordinate-grid">
+                <label>X <input id="cropX" type="number" min="0" /></label>
+                <label>Y <input id="cropY" type="number" min="0" /></label>
+                <label>宽 <input id="cropW" type="number" min="8" /></label>
+                <label>高 <input id="cropH" type="number" min="8" /></label>
+              </div>
+              <p>数值对应原图像素，可用于逐边精确校正。</p>
+            </div>
+          </aside>
+        </div>
+
+        <section class="frames-section" aria-labelledby="framesTitle">
+          <div class="frames-heading">
+            <div>
+              <p class="eyebrow">CONTACT SHEET · 03</p>
+              <h2 id="framesTitle">画格预览</h2>
+            </div>
+            <div class="frames-heading-aside">
+              <div class="selection-actions">
+                <button id="selectAllButton" type="button">全选</button>
+                <span></span>
+                <button id="clearSelectionButton" type="button">清空</button>
+              </div>
+              <div class="no-frames" id="noFrames" aria-live="polite" hidden>
+                <b>没有找到完整画格</b>
+                <span>尝试调高“黑色阈值”或调低“黑边连续度”，然后重新识别。</span>
+              </div>
+            </div>
+          </div>
+          <div class="frames-grid" id="framesGrid"></div>
+        </section>
+
+        <section class="export-bar" aria-label="导出设置">
+          <div class="export-summary">
+            <span class="export-icon" aria-hidden="true">↳</span>
+            <p><b id="selectedCount">0 张待导出</b><small id="formatSummary">保持原图格式</small></p>
+          </div>
+          <label class="quality-control" id="qualityControl">
+            <span>输出质量</span>
+            <select id="exportQuality">
+              <option value="1" selected>最高质量 · 100%</option>
+              <option value="0.95">高质量 · 95%</option>
+              <option value="0.88">均衡 · 88%</option>
+            </select>
+          </label>
+          <button class="export-button" id="exportButton" type="button" disabled>
+            <span id="exportButtonLabel">导出所选画格</span>
+            <small id="exportButtonHint">逐张</small>
+          </button>
+        </section>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <footer>
+      <span>FILM / FRAME</span>
+      <p>无需上传。像素只停留在你的浏览器中。</p>
+    </footer>
+
+    <script src="node_modules/pako/dist/pako.min.js"></script>
+    <script src="node_modules/utif/UTIF.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
