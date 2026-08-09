@@ -9,7 +9,7 @@
       content="在浏览器本地自动判断正像黑边或原始负像片基，逐格裁切并按原图片格式导出。"
     />
     <title>FILM / FRAME — 胶片自动分帧</title>
-    <link rel="stylesheet" href="styles.css?v=2.2.3" />
+    <link rel="stylesheet" href="styles.css?v=2.2.4" />
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -160,18 +160,23 @@
               <p><b>等待检测</b><small>参数修改后可重新识别</small></p>
             </div>
 
-            <div class="frame-editor" id="frameEditor" hidden>
-              <div class="editor-title">
-                <span>画格 <b id="selectedFrameNumber">01</b></span>
-                <button id="removeFrameButton" type="button">排除此格</button>
+            <div class="frame-editor" id="frameEditor">
+              <div class="frame-editor-placeholder" id="frameEditorPlaceholder" aria-live="polite">
+                <p><b>等待选择画格</b><small>识别完成后，可在画面中选择画格。</small></p>
               </div>
-              <div class="coordinate-grid">
-                <label>X <input id="cropX" type="number" min="0" /></label>
-                <label>Y <input id="cropY" type="number" min="0" /></label>
-                <label>宽 <input id="cropW" type="number" min="8" /></label>
-                <label>高 <input id="cropH" type="number" min="8" /></label>
+              <div class="frame-editor-content" id="frameEditorContent" hidden>
+                <div class="editor-title">
+                  <span>画格 <b id="selectedFrameNumber">01</b></span>
+                  <button id="removeFrameButton" type="button">排除此格</button>
+                </div>
+                <div class="coordinate-grid">
+                  <label>X <input id="cropX" type="number" min="0" /></label>
+                  <label>Y <input id="cropY" type="number" min="0" /></label>
+                  <label>宽 <input id="cropW" type="number" min="8" /></label>
+                  <label>高 <input id="cropH" type="number" min="8" /></label>
+                </div>
+                <p>数值对应原图像素，可用于逐边精确校正。</p>
               </div>
-              <p>数值对应原图像素，可用于逐边精确校正。</p>
             </div>
           </aside>
         </div>
@@ -227,6 +232,6 @@
 
     <script src="node_modules/pako/dist/pako.min.js"></script>
     <script src="node_modules/utif/UTIF.js"></script>
-    <script src="app.js?v=2.2.3"></script>
+    <script src="app.js?v=2.2.4"></script>
   </body>
 </html>

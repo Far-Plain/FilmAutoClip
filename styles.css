@@ -792,6 +792,7 @@ input[type="range"]::-webkit-slider-thumb {
 .detect-button kbd { padding: 3px 6px; color: inherit; border: 1px solid currentColor; background: transparent; font: 10px var(--display); }
 
 .detected-status {
+  min-height: 76px;
   margin: 0 16px 14px;
   padding: 10px;
   display: flex;
@@ -817,10 +818,36 @@ input[type="range"]::-webkit-slider-thumb {
 .detected-status small { color: var(--muted); font-size: 9px; line-height: 1.4; }
 
 .frame-editor {
+  min-height: 142px;
   margin: 0 16px 14px;
   padding-top: 14px;
   border-top: 1px solid var(--ink);
 }
+
+.frame-editor-placeholder {
+  min-height: 127px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.frame-editor-placeholder::before {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  content: "";
+  background: rgba(255,255,255,.35);
+}
+
+.frame-editor-placeholder p { margin: 0; }
+.frame-editor-placeholder b,
+.frame-editor-placeholder small { display: block; }
+.frame-editor-placeholder b { margin-bottom: 2px; color: var(--ink); font-size: 11px; }
+.frame-editor-placeholder small { font-size: 9px; line-height: 1.4; }
+.frame-editor-placeholder[hidden],
+.frame-editor-content[hidden] { display: none; }
 
 .editor-title {
   margin-bottom: 10px;
@@ -858,7 +885,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .coordinate-grid input:focus { border-color: var(--orange); }
-.frame-editor > p { margin: 8px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.frame-editor-content > p { margin: 8px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
 
 .frames-section {
   padding: 56px 0 38px;

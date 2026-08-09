@@ -36,6 +36,8 @@
     resultCount: $("#resultCount"),
     detectedStatus: $("#detectedStatus"),
     frameEditor: $("#frameEditor"),
+    frameEditorPlaceholder: $("#frameEditorPlaceholder"),
+    frameEditorContent: $("#frameEditorContent"),
     selectedFrameNumber: $("#selectedFrameNumber"),
     removeFrameButton: $("#removeFrameButton"),
     cropX: $("#cropX"),
@@ -1530,7 +1532,8 @@
 
   function renderFrameEditor() {
     const frame = state.frames[state.selectedIndex];
-    els.frameEditor.hidden = !frame;
+    els.frameEditorPlaceholder.hidden = Boolean(frame);
+    els.frameEditorContent.hidden = !frame;
     if (!frame) return;
     els.selectedFrameNumber.textContent = String(state.selectedIndex + 1).padStart(2, "0");
     els.cropX.value = frame.x;
