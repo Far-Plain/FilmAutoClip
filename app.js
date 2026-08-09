@@ -18,6 +18,14 @@
     canvasShell: $("#canvasShell"),
     sourceCanvas: $("#sourceCanvas"),
     canvasMessage: $("#canvasMessage"),
+    sourceMode: $("#sourceMode"),
+    filmBaseControl: $("#filmBaseControl"),
+    filmBaseSwatch: $("#filmBaseSwatch"),
+    filmBaseStatus: $("#filmBaseStatus"),
+    filmBaseSampleButton: $("#filmBaseSampleButton"),
+    filmBaseClearButton: $("#filmBaseClearButton"),
+    thresholdLabel: $("#thresholdLabel"),
+    thresholdRangeLabels: $("#thresholdRangeLabels"),
     orientation: $("#orientation"),
     blackThreshold: $("#blackThreshold"),
     blackThresholdValue: $("#blackThresholdValue"),
@@ -67,6 +75,7 @@
     tiffSource: null,
     exportDirectoryHandle: null,
     sourceViewRotation: 0,
+    baseSamplingActive: false,
     busy: false
   };
 
@@ -112,6 +121,9 @@
       els.fileInput.click();
     });
     els.detectButton.addEventListener("click", detectFrames);
+    els.sourceMode.addEventListener("change", handleSourceModeChange);
+    els.filmBaseSampleButton.addEventListener("click", toggleFilmBaseSampling);
+    els.filmBaseClearButton.addEventListener("click", clearFilmBaseSamples);
     els.sourceRotateLeft.addEventListener("click", () => rotateSourceView(-90));
     els.sourceRotateRight.addEventListener("click", () => rotateSourceView(90));
     els.sourceCanvas.addEventListener("click", selectFrameFromCanvas);
@@ -129,6 +141,11 @@
     });
 
     document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && state.baseSamplingActive) {
+        event.preventDefault();
+        stopFilmBaseSampling();
+        return;
+      }
       if (event.key.toLowerCase() === "r" && state.image && !isFormControl(event.target)) {
         event.preventDefault();
         detectFrames();
@@ -156,8 +173,12 @@
         threshold: 20,
         coverage: Number(els.borderCoverage.value) / 100,
         inset: Number(els.edgeInset.value),
-        orientation: els.orientation.value
+        orientation: els.orientation.value,
+        sourceMode: "auto"
       },
+      baseSamples: [],
+      filmBase: null,
+      detectionMode: null,
       status: "pending",
       error: null,
       meta: null,
@@ -174,7 +195,8 @@
       threshold: Number(els.blackThreshold.value),
       coverage: Number(els.borderCoverage.value) / 100,
       inset: Number(els.edgeInset.value),
-      orientation: els.orientation.value
+      orientation: els.orientation.value,
+      sourceMode: els.sourceMode.value
     };
   }
 
@@ -183,7 +205,9 @@
     els.borderCoverage.value = String(Math.round(job.options.coverage * 100));
     els.edgeInset.value = String(job.options.inset);
     els.orientation.value = job.options.orientation;
+    els.sourceMode.value = job.options.sourceMode || "auto";
     updateRangeLabels();
+    updateFilmBaseUi(job);
   }
 
   function syncActiveJobState() {
@@ -209,6 +233,8 @@
     state.tiffPageCount = 0;
     state.tiffSource = null;
     state.sourceViewRotation = 0;
+    state.baseSamplingActive = false;
+    els.canvasShell?.classList.remove("is-base-sampling");
     if (els.framesGrid) els.framesGrid.replaceChildren();
     if (els.sourceCanvas) {
       els.sourceCanvas.width = 1;
@@ -423,7 +449,8 @@
 
   async function detectFrames() {
     if (!state.analysis || state.busy) return;
-    setBusy(true, "正在沿黑边定位画格…");
+    if (state.baseSamplingActive) stopFilmBaseSampling();
+    setBusy(true, "正在分析边界与片基颜色…");
     await nextPaint();
 
     try {
@@ -450,7 +477,8 @@
     const job = getActiveJob();
     if (!job || !state.analysis) return null;
     const options = readDetectionOptions();
-    const result = runDetection(state.analysis, options);
+    const manualFilmBase = getManualFilmBase(state.analysis, job.baseSamples);
+    const result = runDetection(state.analysis, manualFilmBase ? { ...options, filmBase: manualFilmBase } : options);
     state.frames = result.frames.map((frame, index) => {
       const rect = toOriginalRect(frame);
       return {
@@ -466,6 +494,14 @@
     job.selectedIndex = state.selectedIndex;
     job.status = "ready";
     job.error = null;
+    job.filmBase = result.filmBase
+      ? {
+        ...result.filmBase,
+        confidence: result.filmBaseConfidence,
+        source: result.filmBaseSource
+      }
+      : null;
+    job.detectionMode = result.detectionMode;
 
     if (state.frames.length) {
       const perTrack = result.stripFrameCounts.length > 1
@@ -477,15 +513,19 @@
       const edgeFrames = result.edgeFrameCount
         ? ` · 补全 ${result.edgeFrameCount} 个边缘画格`
         : "";
+      const modeNote = result.detectionMode === "negative"
+        ? ` · 负像片基${result.filmBaseSource === "manual" ? "手动校正" : "自动采样"}`
+        : " · 正像黑边";
       job.detection = {
         type: "success",
         title: `找到 ${state.frames.length} 个完整画格`,
-        detail: `${result.stripCount} 条片轨${perTrack}${recovered}${edgeFrames} · ${result.orientation === "vertical" ? "纵向排列" : "横向排列"}`
+        detail: `${result.stripCount} 条片轨${perTrack}${recovered}${edgeFrames} · ${result.orientation === "vertical" ? "纵向排列" : "横向排列"}${modeNote}`
       };
     } else {
-      job.detection = { type: "warning", title: "未识别到完整画格", detail: "请调整阈值后再次检测" };
+      job.detection = { type: "warning", title: "未识别到完整画格", detail: "请调整边界阈值，或使用片基吸管校正" };
     }
     renderAll();
+    updateFilmBaseUi(job);
     renderJobDetectionStatus(job);
     return result;
   }
@@ -501,8 +541,63 @@
   }
 
   function runDetection(analysis, options) {
-    const mask = createBlackMask(analysis.imageData.data, analysis.width, analysis.height, options.threshold);
-    const foregroundMask = createForegroundMask(analysis.imageData.data, analysis.width, analysis.height);
+    const requestedMode = options.sourceMode || "auto";
+    let positiveResult = null;
+    if (requestedMode !== "negative") {
+      const blackMask = createBlackMask(analysis.imageData.data, analysis.width, analysis.height, options.threshold);
+      const foregroundMask = createForegroundMask(analysis.imageData.data, analysis.width, analysis.height);
+      positiveResult = runDetectionWithMasks(analysis, options, blackMask, foregroundMask);
+      Object.assign(positiveResult, {
+        detectionMode: "positive",
+        filmBase: null,
+        filmBaseConfidence: null,
+        filmBaseSource: null
+      });
+      if (requestedMode === "positive") return positiveResult;
+    }
+
+    const candidates = options.filmBase
+      ? [{ ...options.filmBase, source: "manual", weight: Number.MAX_SAFE_INTEGER }]
+      : findFilmBaseCandidates(analysis.imageData.data, analysis.width, analysis.height);
+    const adaptiveForeground = createAdaptiveForegroundMask(
+      analysis.imageData.data,
+      analysis.width,
+      analysis.height
+    );
+    const negativeResults = candidates.map((candidate) => {
+      const baseMask = createFilmBaseMask(
+        analysis.imageData.data,
+        analysis.width,
+        analysis.height,
+        candidate,
+        options.threshold
+      );
+      const result = runDetectionWithMasks(analysis, options, baseMask, adaptiveForeground);
+      return { candidate, result, score: scoreResult(result, analysis) };
+    }).sort((a, b) => b.score - a.score);
+    const bestNegative = negativeResults[0];
+    if (!bestNegative) return positiveResult;
+    const nextScore = negativeResults[1]?.score || 0;
+    const confidence = bestNegative.candidate.source === "manual"
+      ? 100
+      : Math.round(clamp(48 + (bestNegative.score - nextScore) * 3, 48, 96));
+    Object.assign(bestNegative.result, {
+      detectionMode: "negative",
+      filmBase: {
+        r: Math.round(bestNegative.candidate.r),
+        g: Math.round(bestNegative.candidate.g),
+        b: Math.round(bestNegative.candidate.b)
+      },
+      filmBaseConfidence: confidence,
+      filmBaseSource: bestNegative.candidate.source || "auto"
+    });
+
+    if (requestedMode === "negative") return bestNegative.result;
+    const positiveScore = positiveResult ? scoreResult(positiveResult, analysis) : 0;
+    return bestNegative.score > positiveScore * 1.08 + 2 ? bestNegative.result : positiveResult;
+  }
+
+  function runDetectionWithMasks(analysis, options, mask, foregroundMask) {
     const shared = { ...analysis, mask, foregroundMask, options };
 
     if (options.orientation === "vertical") return detectByOrientation(shared, "vertical");
@@ -511,6 +606,142 @@
     const vertical = detectByOrientation(shared, "vertical");
     const horizontal = detectByOrientation(shared, "horizontal");
     return scoreResult(vertical, analysis) >= scoreResult(horizontal, analysis) ? vertical : horizontal;
+  }
+
+  function findFilmBaseCandidates(data, width, height, maximumCandidates = 10) {
+    const bins = new Map();
+    const step = Math.max(1, Math.ceil(Math.sqrt((width * height) / 70000)));
+    const neighbor = Math.max(1, step * 2);
+
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const offset = (y * width + x) * 4;
+        if (data[offset + 3] < 240) continue;
+        const nextX = Math.min(width - 1, x + neighbor);
+        const nextY = Math.min(height - 1, y + neighbor);
+        const rightOffset = (y * width + nextX) * 4;
+        const downOffset = (nextY * width + x) * 4;
+        const variation = (
+          Math.abs(data[offset] - data[rightOffset])
+          + Math.abs(data[offset + 1] - data[rightOffset + 1])
+          + Math.abs(data[offset + 2] - data[rightOffset + 2])
+          + Math.abs(data[offset] - data[downOffset])
+          + Math.abs(data[offset + 1] - data[downOffset + 1])
+          + Math.abs(data[offset + 2] - data[downOffset + 2])
+        ) / 6;
+        if (variation > 24) continue;
+        const key = `${data[offset] >> 5}-${data[offset + 1] >> 5}-${data[offset + 2] >> 5}`;
+        const bin = bins.get(key) || { count: 0, r: 0, g: 0, b: 0 };
+        bin.count += 1;
+        bin.r += data[offset];
+        bin.g += data[offset + 1];
+        bin.b += data[offset + 2];
+        bins.set(key, bin);
+      }
+    }
+
+    const all = Array.from(bins.values(), (bin) => ({
+      r: bin.r / bin.count,
+      g: bin.g / bin.count,
+      b: bin.b / bin.count,
+      weight: bin.count,
+      source: "auto"
+    }));
+    if (!all.length) return [{ r: 245, g: 245, b: 245, weight: 1, source: "auto" }];
+    const byWeight = [...all].sort((a, b) => b.weight - a.weight);
+    const byLuminance = [...all].sort((a, b) => colorLuminance(a) - colorLuminance(b));
+    const pool = [
+      ...byWeight.slice(0, Math.max(maximumCandidates, 14)),
+      ...byLuminance.slice(0, 2),
+      ...byLuminance.slice(-2)
+    ];
+    const candidates = [];
+    for (const candidate of pool) {
+      const duplicate = candidates.some((other) => colorDistance(candidate, other) < 24);
+      if (!duplicate) candidates.push(candidate);
+      if (candidates.length >= maximumCandidates) break;
+    }
+    return candidates;
+  }
+
+  function createFilmBaseMask(data, width, height, base, threshold) {
+    const mask = new Uint8Array(width * height);
+    const tolerance = 0.76 + clamp((Number(threshold) - 18) / 92, 0, 1) * 1.2;
+    const redScale = Math.max(18, base.r * 0.12);
+    const greenScale = Math.max(18, base.g * 0.12);
+    const blueScale = Math.max(18, base.b * 0.12);
+    for (let pixel = 0, offset = 0; pixel < mask.length; pixel += 1, offset += 4) {
+      const red = (data[offset] - base.r) / redScale;
+      const green = (data[offset + 1] - base.g) / greenScale;
+      const blue = (data[offset + 2] - base.b) / blueScale;
+      const distance = Math.sqrt((red * red + green * green + blue * blue) / 3);
+      mask[pixel] = data[offset + 3] >= 24 && distance <= tolerance ? 1 : 0;
+    }
+    return mask;
+  }
+
+  function createAdaptiveForegroundMask(data, width, height) {
+    const background = sampleBoundaryBackground(data, width, height);
+    const mask = new Uint8Array(width * height);
+    const tolerance = Math.max(30, Math.min(58, background.spread * 2.6));
+    for (let pixel = 0, offset = 0; pixel < mask.length; pixel += 1, offset += 4) {
+      if (data[offset + 3] < 24) continue;
+      const distance = colorDistance(
+        { r: data[offset], g: data[offset + 1], b: data[offset + 2] },
+        background
+      );
+      mask[pixel] = distance > tolerance ? 1 : 0;
+    }
+    return mask;
+  }
+
+  function sampleBoundaryBackground(data, width, height) {
+    const samples = [];
+    const inset = Math.max(0, Math.round(Math.min(width, height) * 0.008));
+    const step = Math.max(1, Math.round(Math.max(width, height) / 500));
+    for (let x = 0; x < width; x += step) {
+      samples.push(readRgb(data, width, x, inset), readRgb(data, width, x, height - 1 - inset));
+    }
+    for (let y = 0; y < height; y += step) {
+      samples.push(readRgb(data, width, inset, y), readRgb(data, width, width - 1 - inset, y));
+    }
+    const bins = new Map();
+    samples.forEach((color) => {
+      const key = `${color.r >> 5}-${color.g >> 5}-${color.b >> 5}`;
+      const bin = bins.get(key) || { count: 0, colors: [] };
+      bin.count += 1;
+      bin.colors.push(color);
+      bins.set(key, bin);
+    });
+    const dominant = Array.from(bins.values()).sort((a, b) => b.count - a.count)[0];
+    const r = median(dominant.colors.map((color) => color.r));
+    const g = median(dominant.colors.map((color) => color.g));
+    const b = median(dominant.colors.map((color) => color.b));
+    const distances = dominant.colors.map((color) => colorDistance(color, { r, g, b }));
+    return { r, g, b, spread: median(distances) || 12 };
+  }
+
+  function readRgb(data, width, x, y) {
+    const offset = (y * width + x) * 4;
+    return { r: data[offset], g: data[offset + 1], b: data[offset + 2] };
+  }
+
+  function colorLuminance(color) {
+    return color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722;
+  }
+
+  function colorDistance(first, second) {
+    const red = first.r - second.r;
+    const green = first.g - second.g;
+    const blue = first.b - second.b;
+    return Math.sqrt(red * red + green * green + blue * blue);
+  }
+
+  function median(values) {
+    if (!values.length) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
   }
 
   function createBlackMask(data, width, height, threshold) {
@@ -1187,6 +1418,24 @@
       ctx.fillStyle = "#171714";
       ctx.fillText(label, x + 8, y + labelH - 6);
     });
+
+    const samples = getActiveJob()?.baseSamples || [];
+    samples.forEach((sample, index) => {
+      const x = sample.x * sourceWidth;
+      const y = sample.y * sourceHeight;
+      const radius = Math.max(7, Math.min(sourceWidth, sourceHeight) / 85);
+      ctx.setLineDash([]);
+      ctx.lineWidth = Math.max(2, radius / 4);
+      ctx.fillStyle = "rgba(23, 23, 20, .72)";
+      ctx.strokeStyle = "#e6ff3f";
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#e6ff3f";
+      ctx.font = `700 ${Math.max(9, radius)}px Syne, sans-serif`;
+      ctx.fillText(String(index + 1), x - radius * .28, y + radius * .34);
+    });
     ctx.restore();
     els.canvasMessage.hidden = !state.busy;
   }
@@ -1293,16 +1542,12 @@
   }
 
   function selectFrameFromCanvas(event) {
-    const bounds = els.sourceCanvas.getBoundingClientRect();
-    const canvasX = (event.clientX - bounds.left) * (els.sourceCanvas.width / bounds.width);
-    const canvasY = (event.clientY - bounds.top) * (els.sourceCanvas.height / bounds.height);
-    const sourcePoint = mapRotatedPointToSource(
-      canvasX,
-      canvasY,
-      state.sourceViewRotation,
-      state.analysis.width,
-      state.analysis.height
-    );
+    if (!state.analysis) return;
+    const sourcePoint = getSourceCanvasPoint(event);
+    if (state.baseSamplingActive) {
+      addFilmBaseSample(sourcePoint);
+      return;
+    }
     const x = sourcePoint.x * state.scaleX;
     const y = sourcePoint.y * state.scaleY;
     const index = state.frames.findIndex((frame) => x >= frame.x && x <= frame.x + frame.w && y >= frame.y && y <= frame.y + frame.h);
@@ -1311,6 +1556,149 @@
       renderAll();
       const card = els.framesGrid.querySelector(`[data-index="${index}"]`);
       card?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+
+  function getSourceCanvasPoint(event) {
+    const bounds = els.sourceCanvas.getBoundingClientRect();
+    const canvasX = (event.clientX - bounds.left) * (els.sourceCanvas.width / bounds.width);
+    const canvasY = (event.clientY - bounds.top) * (els.sourceCanvas.height / bounds.height);
+    return mapRotatedPointToSource(
+      canvasX,
+      canvasY,
+      state.sourceViewRotation,
+      state.analysis.width,
+      state.analysis.height
+    );
+  }
+
+  function addFilmBaseSample(point) {
+    const job = getActiveJob();
+    if (!job || !state.analysis) return;
+    const sample = {
+      x: clamp(point.x / state.analysis.width, 0, 1),
+      y: clamp(point.y / state.analysis.height, 0, 1)
+    };
+    if (job.baseSamples.length >= 5) job.baseSamples.shift();
+    job.baseSamples.push(sample);
+    job.filmBase = {
+      ...getManualFilmBase(state.analysis, job.baseSamples),
+      confidence: 100,
+      source: "manual"
+    };
+    drawSourceOverlay();
+    updateFilmBaseUi(job);
+    showToast(`已记录 ${job.baseSamples.length} 个片基样本，完成后点击“识别”`);
+  }
+
+  function getManualFilmBase(analysis, samples) {
+    if (!analysis || !samples?.length) return null;
+    const colors = samples.map((sample) => sampleFilmBasePatch(
+      analysis.imageData,
+      analysis.width,
+      analysis.height,
+      Math.round(sample.x * analysis.width),
+      Math.round(sample.y * analysis.height)
+    ));
+    return {
+      r: median(colors.map((color) => color.r)),
+      g: median(colors.map((color) => color.g)),
+      b: median(colors.map((color) => color.b))
+    };
+  }
+
+  function sampleFilmBasePatch(imageData, width, height, centerX, centerY) {
+    const radius = Math.max(3, Math.round(Math.min(width, height) / 160));
+    const red = [];
+    const green = [];
+    const blue = [];
+    for (let y = Math.max(0, centerY - radius); y <= Math.min(height - 1, centerY + radius); y += 1) {
+      for (let x = Math.max(0, centerX - radius); x <= Math.min(width - 1, centerX + radius); x += 1) {
+        const offset = (y * width + x) * 4;
+        if (imageData.data[offset + 3] < 240) continue;
+        red.push(imageData.data[offset]);
+        green.push(imageData.data[offset + 1]);
+        blue.push(imageData.data[offset + 2]);
+      }
+    }
+    return { r: median(red), g: median(green), b: median(blue) };
+  }
+
+  function handleSourceModeChange() {
+    const job = getActiveJob();
+    if (!job || state.busy) return;
+    job.options.sourceMode = els.sourceMode.value;
+    if (els.sourceMode.value === "positive") stopFilmBaseSampling();
+    updateFilmBaseUi(job);
+    void detectFrames();
+  }
+
+  function toggleFilmBaseSampling() {
+    const job = getActiveJob();
+    if (!job || !state.analysis || state.busy) return;
+    if (state.baseSamplingActive) {
+      const shouldDetect = job.baseSamples.length > 0;
+      stopFilmBaseSampling();
+      if (shouldDetect) void detectFrames();
+      return;
+    }
+    if (els.sourceMode.value !== "negative") {
+      els.sourceMode.value = "negative";
+      job.options.sourceMode = "negative";
+    }
+    state.baseSamplingActive = true;
+    els.canvasShell.classList.add("is-base-sampling");
+    updateFilmBaseUi(job);
+    showToast("请点击画格之间的空白片基；不要点击外部扫描背景");
+  }
+
+  function stopFilmBaseSampling() {
+    state.baseSamplingActive = false;
+    els.canvasShell.classList.remove("is-base-sampling");
+    updateFilmBaseUi(getActiveJob());
+  }
+
+  function clearFilmBaseSamples() {
+    const job = getActiveJob();
+    if (!job || state.busy) return;
+    job.baseSamples = [];
+    job.filmBase = null;
+    stopFilmBaseSampling();
+    drawSourceOverlay();
+    void detectFrames();
+  }
+
+  function updateFilmBaseUi(job) {
+    if (!job) return;
+    const mode = els.sourceMode.value || job.options.sourceMode || "auto";
+    els.filmBaseControl.hidden = mode === "positive";
+    els.thresholdLabel.textContent = mode === "positive" ? "黑色阈值" : (mode === "negative" ? "片基容差" : "边界阈值");
+    els.thresholdRangeLabels.innerHTML = mode === "positive"
+      ? "<span>仅纯黑</span><span>包含深灰</span>"
+      : "<span>更接近片基</span><span>扩大容差</span>";
+    els.filmBaseSampleButton.classList.toggle("is-active", state.baseSamplingActive);
+    els.filmBaseSampleButton.setAttribute("aria-pressed", String(state.baseSamplingActive));
+    els.filmBaseSampleButton.textContent = state.baseSamplingActive ? "完成采样并识别" : "吸管校正";
+    els.sourceCanvas.setAttribute(
+      "aria-label",
+      state.baseSamplingActive ? "点击原图中的空白片基区域进行采样" : "胶片原图与检测框"
+    );
+    els.filmBaseClearButton.hidden = !job.baseSamples.length;
+
+    const color = job.baseSamples.length && state.analysis
+      ? getManualFilmBase(state.analysis, job.baseSamples)
+      : job.filmBase;
+    if (color) {
+      const rounded = { r: Math.round(color.r), g: Math.round(color.g), b: Math.round(color.b) };
+      els.filmBaseSwatch.style.background = `rgb(${rounded.r} ${rounded.g} ${rounded.b})`;
+      const source = job.baseSamples.length ? `${job.baseSamples.length} 个手动样本` : "自动采样";
+      const confidence = !job.baseSamples.length && color.confidence ? ` · ${color.confidence}%` : "";
+      els.filmBaseStatus.textContent = `${source}${confidence} · RGB ${rounded.r}/${rounded.g}/${rounded.b}`;
+    } else {
+      els.filmBaseSwatch.style.removeProperty("background");
+      els.filmBaseStatus.textContent = job.detectionMode === "positive"
+        ? "自动判断为正像 · 无需片基"
+        : (mode === "auto" ? "等待自动判断" : "等待自动采样");
     }
   }
 
@@ -1959,6 +2347,9 @@
     state.busy = busy;
     els.canvasShell.classList.toggle("is-scanning", busy);
     els.detectButton.disabled = busy;
+    els.sourceMode.disabled = busy;
+    els.filmBaseSampleButton.disabled = busy;
+    els.filmBaseClearButton.disabled = busy;
     els.canvasMessage.hidden = !busy && Boolean(state.analysis);
     if (busy && message) els.canvasMessage.textContent = message;
     updateExportState();

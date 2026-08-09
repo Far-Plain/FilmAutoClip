@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const appSource = fs.readFileSync(require("node:path").join(__dirname, "..", "app.js"), "utf8");
 const instrumented = appSource.replace(
   /\n  bindEvents\(\);\n\}\)\(\);\s*$/,
-  "\n  globalThis.__filmFrameTest = { runDetection, state, getFileFormat, defaultPreviewRotation, getRotatedSize, getFrameOutputSize, mapRotatedPointToSource, cropToBlob, encodePreservedTiffCrop, getWritableExportDirectory, saveFilesToDirectory, addFileNameSuffix, getSelectedExportJobs };\n})();"
+  "\n  globalThis.__filmFrameTest = { runDetection, state, getFileFormat, defaultPreviewRotation, getRotatedSize, getFrameOutputSize, mapRotatedPointToSource, cropToBlob, encodePreservedTiffCrop, getWritableExportDirectory, saveFilesToDirectory, addFileNameSuffix, getSelectedExportJobs, getManualFilmBase };\n})();"
 );
 
 const elementStub = {
@@ -86,7 +86,8 @@ const {
   getWritableExportDirectory,
   saveFilesToDirectory,
   addFileNameSuffix,
-  getSelectedExportJobs
+  getSelectedExportJobs,
+  getManualFilmBase
 } = sandbox.__filmFrameTest;
 const UTIF = require("utif");
 
@@ -124,6 +125,52 @@ function makeSyntheticScan() {
   }
 
   return { width, height, imageData: { data } };
+}
+
+function invertAnalysis(analysis) {
+  const data = new Uint8ClampedArray(analysis.imageData.data);
+  for (let offset = 0; offset < data.length; offset += 4) {
+    data[offset] = 255 - data[offset];
+    data[offset + 1] = 255 - data[offset + 1];
+    data[offset + 2] = 255 - data[offset + 2];
+  }
+  return { width: analysis.width, height: analysis.height, imageData: { data } };
+}
+
+function makeOrangeMaskNegativeScan() {
+  const width = 1000;
+  const height = 1200;
+  const data = new Uint8ClampedArray(width * height * 4);
+
+  function paint(x0, y0, x1, y1, colorAt) {
+    for (let y = y0; y < y1; y += 1) {
+      for (let x = x0; x < x1; x += 1) {
+        const offset = (y * width + x) * 4;
+        const color = typeof colorAt === "function" ? colorAt(x, y) : colorAt;
+        data[offset] = color[0];
+        data[offset + 1] = color[1];
+        data[offset + 2] = color[2];
+        data[offset + 3] = 255;
+      }
+    }
+  }
+
+  const filmBase = [236, 162, 88];
+  paint(0, 0, width, height, [7, 7, 6]);
+  const strips = [[50, 430], [560, 940]];
+  for (const [left, right] of strips) {
+    paint(left, 0, right, height, (x, y) => [
+      35 + ((x + y) % 145),
+      28 + ((x * 2 + y) % 112),
+      20 + ((x + y * 3) % 72)
+    ]);
+    paint(left - 15, 0, left, height, filmBase);
+    paint(right, 0, right + 15, height, filmBase);
+    [[40, 60], [570, 590], [1100, 1120]].forEach(([top, bottom]) => {
+      paint(left, top, right, bottom, filmBase);
+    });
+  }
+  return { width, height, imageData: { data }, filmBase };
 }
 
 function makeEdgeDualScan() {
@@ -330,6 +377,48 @@ async function main() {
     orientation: "auto"
   });
   assert.equal(automatic.frames.length, 4, "automatic orientation should keep all frames");
+  assert.equal(automatic.detectionMode, "positive", "automatic source mode should keep a strong positive-scan result");
+
+  const negativeAnalysis = invertAnalysis(analysis);
+  const negativeAutomatic = runDetection(negativeAnalysis, {
+    threshold: 54,
+    coverage: 0.72,
+    inset: 2,
+    orientation: "auto",
+    sourceMode: "auto"
+  });
+  assert.equal(negativeAutomatic.detectionMode, "negative", "automatic sampling should recognize an original negative");
+  assert.equal(negativeAutomatic.stripCount, 2, "negative film-base sampling should retain both strips");
+  assert.equal(negativeAutomatic.frames.length, 4, "negative film-base sampling should split all frames");
+  assert.ok(negativeAutomatic.filmBase.r > 230, "the bright unexposed film base should be sampled instead of the black scanner bed");
+
+  const orangeNegative = makeOrangeMaskNegativeScan();
+  const orangeNegativeResult = runDetection(orangeNegative, {
+    threshold: 54,
+    coverage: 0.72,
+    inset: 2,
+    orientation: "auto",
+    sourceMode: "auto"
+  });
+  assert.equal(orangeNegativeResult.detectionMode, "negative", "automatic sampling should detect an orange-mask negative");
+  assert.equal(orangeNegativeResult.frames.length, 4, "orange film-base color should divide all four frames");
+  assert.ok(
+    Math.abs(orangeNegativeResult.filmBase.r - orangeNegative.filmBase[0]) < 20
+      && Math.abs(orangeNegativeResult.filmBase.g - orangeNegative.filmBase[1]) < 20
+      && Math.abs(orangeNegativeResult.filmBase.b - orangeNegative.filmBase[2]) < 20,
+    "automatic sampling should choose the orange film base rather than the scanner background"
+  );
+  const manualOrangeBase = getManualFilmBase(orangeNegative, [
+    { x: 0.04, y: 0.25 },
+    { x: 0.44, y: 0.75 },
+    { x: 0.95, y: 0.45 }
+  ]);
+  assert.ok(
+    Math.abs(manualOrangeBase.r - orangeNegative.filmBase[0]) < 4
+      && Math.abs(manualOrangeBase.g - orangeNegative.filmBase[1]) < 4
+      && Math.abs(manualOrangeBase.b - orangeNegative.filmBase[2]) < 4,
+    "manual eyedropper samples should use robust patch medians from film-base rails"
+  );
 
   const edgeAnalysis = makeEdgeDualScan();
   state.image = { naturalWidth: edgeAnalysis.width, naturalHeight: edgeAnalysis.height };
@@ -575,6 +664,7 @@ async function main() {
   console.log("Edge recovery: missing rail / 2 strips / 6 frames — OK");
   console.log("Borderless pair: 2 strips / 2 edge frames — OK");
   console.log("Shared rail: inferred left boundary / 2 strips / 2 frames — OK");
+  console.log("Negative: automatic bright-base and orange-mask sampling — OK");
   console.log("Rotation: flicker-free preview geometry and rotated export — OK");
   console.log("BMP: import detection and lossless 24-bit rotated export — OK");
   console.log("Batch save: picker opens at remembered directory / collision-safe files — OK");

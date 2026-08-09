@@ -604,6 +604,84 @@ main {
   font-size: 13px;
 }
 
+.film-base-control {
+  margin-top: 12px;
+  padding: 11px;
+  border: 1px solid #aaa598;
+  background: rgba(255, 255, 255, .42);
+}
+
+.film-base-control[hidden] { display: none; }
+
+.film-base-readout {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.film-base-swatch {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border: 1px solid var(--ink);
+  background:
+    linear-gradient(45deg, #d5d1c7 25%, transparent 25%) 0 0/8px 8px,
+    linear-gradient(-45deg, #d5d1c7 25%, transparent 25%) 0 4px/8px 8px,
+    var(--white);
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,.5);
+}
+
+.film-base-readout p { min-width: 0; margin: 0; }
+.film-base-readout b,
+.film-base-readout small { display: block; }
+.film-base-readout b { margin-bottom: 2px; font-size: 11px; }
+.film-base-readout small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+
+.film-base-actions {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+}
+
+.film-base-actions button {
+  min-height: 31px;
+  padding: 0 10px;
+  border: 1px solid var(--ink);
+  color: var(--ink);
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.film-base-actions button:hover,
+.film-base-actions button.is-active { background: var(--acid); }
+.film-base-actions button:disabled { opacity: .45; cursor: wait; }
+.film-base-actions button[hidden] { display: none; }
+
+.film-base-help {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.canvas-shell.is-base-sampling::after {
+  position: absolute;
+  z-index: 3;
+  top: 10px;
+  left: 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--acid);
+  color: var(--acid);
+  background: rgba(23, 23, 20, .88);
+  content: "PICK FILM BASE · 点击片基区域";
+  font: 700 9px var(--display);
+  letter-spacing: .08em;
+  pointer-events: none;
+}
+
 .label-row {
   display: flex;
   justify-content: space-between;
@@ -1002,12 +1080,13 @@ footer span { color: var(--ink); font: 800 11px var(--display); }
   .work-grid { display: block; }
   .viewer-panel { border-right: 0; border-bottom: 1px solid var(--ink); }
   .canvas-shell { min-height: 400px; }
-  .control-panel { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .control-panel { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .control-heading { grid-column: 1 / -1; }
   .control-panel > .field-group { min-width: 0; border-right: 1px solid var(--line); }
-  .control-panel > .field-group:nth-child(4) { border-right: 0; }
+  .source-mode-field { grid-column: 1 / -1; border-right: 0 !important; }
+  .control-panel > .field-group.tablet-edge { border-right: 0; }
   .detect-button { grid-column: 1; width: auto; margin: 20px 10px 20px 22px; }
-  .detected-status { grid-column: 2 / 4; margin: 20px 22px 20px 10px; }
+  .detected-status { grid-column: 2; margin: 20px 22px 20px 10px; }
   .frame-editor { grid-column: 1 / -1; margin: 0 22px 22px; }
   .frames-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .export-bar { grid-template-columns: minmax(0, 1fr) 250px; }
