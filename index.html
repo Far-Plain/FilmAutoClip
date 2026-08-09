@@ -9,7 +9,7 @@
       content="在浏览器本地自动判断正像黑边或原始负像片基，逐格裁切并按原图片格式导出。"
     />
     <title>FILM / FRAME — 胶片自动分帧</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=2.2.2" />
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -57,15 +57,15 @@
           <button class="text-button" id="changeFileButton" type="button">添加底片</button>
         </div>
 
-        <section class="job-queue" aria-labelledby="jobQueueTitle">
-          <div class="job-queue-heading">
-            <span id="jobQueueTitle">底片任务</span>
-            <output id="jobQueueSummary">0 张底片</output>
-          </div>
-          <div class="job-list" id="jobList" role="list"></div>
-        </section>
-
         <div class="work-grid">
+          <section class="job-queue" aria-labelledby="jobQueueTitle">
+            <div class="job-queue-heading">
+              <span id="jobQueueTitle">底片目录</span>
+              <output id="jobQueueSummary">0 张底片</output>
+            </div>
+            <div class="job-list" id="jobList" role="list"></div>
+          </section>
+
           <section class="viewer-panel" aria-labelledby="viewerTitle">
             <div class="panel-head">
               <div>
@@ -124,16 +124,7 @@
               </div>
             </div>
 
-            <div class="field-group">
-              <label for="orientation">胶片排列</label>
-              <select id="orientation">
-                <option value="auto">自动判断</option>
-                <option value="vertical">纵向片条</option>
-                <option value="horizontal">横向片条</option>
-              </select>
-            </div>
-
-            <div class="field-group range-field tablet-edge">
+            <div class="field-group range-field">
               <div class="label-row">
                 <label for="blackThreshold" id="thresholdLabel">边界阈值</label>
                 <output id="blackThresholdValue" for="blackThreshold">20</output>
@@ -142,7 +133,7 @@
               <div class="range-labels" id="thresholdRangeLabels"><span>更接近边界色</span><span>扩大容差</span></div>
             </div>
 
-            <div class="field-group range-field">
+            <div class="field-group range-field tablet-edge">
               <div class="label-row">
                 <label for="borderCoverage">边界连续度</label>
                 <output id="borderCoverageValue" for="borderCoverage">72%</output>
@@ -151,7 +142,7 @@
               <div class="range-labels"><span>容许断点</span><span>更严格</span></div>
             </div>
 
-            <div class="field-group range-field tablet-edge">
+            <div class="field-group range-field range-wide">
               <div class="label-row">
                 <label for="edgeInset">向内收边</label>
                 <output id="edgeInsetValue" for="edgeInset">2 px</output>
@@ -236,6 +227,6 @@
 
     <script src="node_modules/pako/dist/pako.min.js"></script>
     <script src="node_modules/utif/UTIF.js"></script>
-    <script src="app.js"></script>
+    <script src="app.js?v=2.2.2"></script>
   </body>
 </html>

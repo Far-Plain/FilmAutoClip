@@ -26,7 +26,6 @@
     filmBaseClearButton: $("#filmBaseClearButton"),
     thresholdLabel: $("#thresholdLabel"),
     thresholdRangeLabels: $("#thresholdRangeLabels"),
-    orientation: $("#orientation"),
     blackThreshold: $("#blackThreshold"),
     blackThresholdValue: $("#blackThresholdValue"),
     borderCoverage: $("#borderCoverage"),
@@ -173,7 +172,7 @@
         threshold: 20,
         coverage: Number(els.borderCoverage.value) / 100,
         inset: Number(els.edgeInset.value),
-        orientation: els.orientation.value,
+        orientation: "auto",
         sourceMode: "auto"
       },
       baseSamples: [],
@@ -195,7 +194,7 @@
       threshold: Number(els.blackThreshold.value),
       coverage: Number(els.borderCoverage.value) / 100,
       inset: Number(els.edgeInset.value),
-      orientation: els.orientation.value,
+      orientation: "auto",
       sourceMode: els.sourceMode.value
     };
   }
@@ -204,7 +203,6 @@
     els.blackThreshold.value = String(job.options.threshold);
     els.borderCoverage.value = String(Math.round(job.options.coverage * 100));
     els.edgeInset.value = String(job.options.inset);
-    els.orientation.value = job.options.orientation;
     els.sourceMode.value = job.options.sourceMode || "auto";
     updateRangeLabels();
     updateFilmBaseUi(job);
