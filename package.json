@@ -1,8 +1,8 @@
 {
   "name": "film-frame",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
-  "description": "Local film scan frame detector with TIFF support",
+  "description": "Local film scan frame detector with TIFF and BMP support",
   "scripts": {
     "test": "node tests/detection.test.js"
   },

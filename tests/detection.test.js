@@ -26,6 +26,16 @@ function createCanvasStub() {
     save() {},
     restore() {},
     fillRect() {},
+    getImageData(x, y, width, height) {
+      const data = new Uint8ClampedArray(width * height * 4);
+      for (let offset = 0; offset < data.length; offset += 4) {
+        data[offset] = 10;
+        data[offset + 1] = 20;
+        data[offset + 2] = 30;
+        data[offset + 3] = 255;
+      }
+      return { data };
+    },
     translate(x, y) { record.translations.push([x, y]); },
     rotate(angle) { record.rotations.push(angle); },
     drawImage(...args) { record.drawCalls.push(args); }
@@ -410,6 +420,23 @@ async function main() {
   assert.deepEqual(exportRecord.translations[0], [180, 0], "rotated export should apply a quarter-turn transform");
   assert.equal(exportedBlob.type, "image/png", "rotated export should preserve the selected file format");
 
+  assert.equal(getFileFormat({ name: "SCAN.BMP", type: "" }).mime, "image/bmp", "BMP should work without browser MIME data");
+  assert.equal(getFileFormat({ name: "scan.bmp", type: "image/x-ms-bmp" }).ext, "bmp", "legacy BMP MIME data should be accepted");
+  const bmpBlob = await cropToBlob(
+    { x: 0, y: 0, w: 3, h: 2, previewRotation: 90 },
+    { mime: "image/bmp", isBmp: true },
+    1
+  );
+  const bmpBytes = new Uint8Array(await bmpBlob.arrayBuffer());
+  const bmpView = new DataView(bmpBytes.buffer);
+  assert.equal(bmpBlob.type, "image/bmp", "BMP export should use the BMP MIME type");
+  assert.equal(String.fromCharCode(bmpBytes[0], bmpBytes[1]), "BM", "BMP export should contain a bitmap file header");
+  assert.equal(bmpView.getInt32(18, true), 2, "rotated BMP width should follow the preview");
+  assert.equal(bmpView.getInt32(22, true), 3, "rotated BMP height should follow the preview");
+  assert.equal(bmpView.getUint16(28, true), 24, "BMP export should use lossless 24-bit BGR pixels");
+  assert.equal(bmpBytes.length, 78, "BMP rows should use the required four-byte alignment");
+  assert.deepEqual(Array.from(bmpBytes.slice(54, 57)), [30, 20, 10], "BMP pixels should be encoded in BGR order");
+
   const directoryEntries = new Map();
   const writtenFiles = [];
   const makeFileHandle = (name) => ({
@@ -549,6 +576,7 @@ async function main() {
   console.log("Borderless pair: 2 strips / 2 edge frames — OK");
   console.log("Shared rail: inferred left boundary / 2 strips / 2 frames — OK");
   console.log("Rotation: flicker-free preview geometry and rotated export — OK");
+  console.log("BMP: import detection and lossless 24-bit rotated export — OK");
   console.log("Batch save: picker opens at remembered directory / collision-safe files — OK");
   console.log("TIFF: 16-bit samples, rotation and metadata preservation — OK");
 }

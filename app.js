@@ -74,6 +74,7 @@
     "image/jpeg": { ext: "jpg", label: "JPG", mime: "image/jpeg" },
     "image/png": { ext: "png", label: "PNG", mime: "image/png" },
     "image/webp": { ext: "webp", label: "WEBP", mime: "image/webp" },
+    "image/bmp": { ext: "bmp", label: "BMP", mime: "image/bmp", isBmp: true },
     "image/tiff": { ext: "tif", label: "TIFF", mime: "image/tiff", isTiff: true }
   };
 
@@ -231,7 +232,7 @@
     });
 
     if (!accepted.length) {
-      showToast("请选择 JPG、PNG、WEBP、TIF 或 TIFF 图片");
+      showToast("请选择 JPG、PNG、WEBP、BMP、TIF 或 TIFF 图片");
       return;
     }
 
@@ -389,6 +390,9 @@
     }
     if (extension === "png" || mime === "image/png") return { ...formatMap["image/png"] };
     if (extension === "webp" || mime === "image/webp") return { ...formatMap["image/webp"] };
+    if (extension === "bmp" || ["image/bmp", "image/x-bmp", "image/x-ms-bmp"].includes(mime)) {
+      return { ...formatMap["image/bmp"] };
+    }
     return null;
   }
 
@@ -1870,6 +1874,47 @@
     return writeClassicTiff(entries, crop.data, source.littleEndian);
   }
 
+  function encodeBmpCanvas(canvas) {
+    const width = canvas.width;
+    const height = canvas.height;
+    const rowStride = Math.ceil((width * 3) / 4) * 4;
+    const pixelBytes = rowStride * height;
+    const headerBytes = 54;
+    const fileSize = headerBytes + pixelBytes;
+    if (!width || !height || !Number.isSafeInteger(fileSize) || fileSize > 0xffffffff) {
+      throw new Error("BMP output dimensions are too large");
+    }
+
+    const rgba = canvas.getContext("2d").getImageData(0, 0, width, height).data;
+    const output = new Uint8Array(fileSize);
+    const view = new DataView(output.buffer);
+    output[0] = 0x42;
+    output[1] = 0x4d;
+    view.setUint32(2, fileSize, true);
+    view.setUint32(10, headerBytes, true);
+    view.setUint32(14, 40, true);
+    view.setInt32(18, width, true);
+    view.setInt32(22, height, true);
+    view.setUint16(26, 1, true);
+    view.setUint16(28, 24, true);
+    view.setUint32(34, pixelBytes, true);
+    view.setInt32(38, 2835, true);
+    view.setInt32(42, 2835, true);
+
+    for (let outputY = 0; outputY < height; outputY += 1) {
+      const sourceY = height - outputY - 1;
+      const rowOffset = headerBytes + outputY * rowStride;
+      for (let x = 0; x < width; x += 1) {
+        const sourceOffset = (sourceY * width + x) * 4;
+        const targetOffset = rowOffset + x * 3;
+        output[targetOffset] = rgba[sourceOffset + 2];
+        output[targetOffset + 1] = rgba[sourceOffset + 1];
+        output[targetOffset + 2] = rgba[sourceOffset];
+      }
+    }
+    return new Blob([output], { type: "image/bmp" });
+  }
+
   function cropToBlob(frame, format, quality) {
     if (format.isTiff) {
       if (!state.tiffSource) return Promise.reject(new Error("TIFF source samples are unavailable"));
@@ -1882,8 +1927,8 @@
     const canvas = document.createElement("canvas");
     canvas.width = outputSize.width;
     canvas.height = outputSize.height;
-    const ctx = canvas.getContext("2d", { alpha: format.mime !== "image/jpeg" });
-    if (format.mime === "image/jpeg") {
+    const ctx = canvas.getContext("2d", { alpha: format.mime !== "image/jpeg" && !format.isBmp });
+    if (format.mime === "image/jpeg" || format.isBmp) {
       ctx.fillStyle = "#fff";
       ctx.fillRect(0, 0, outputSize.width, outputSize.height);
     }
@@ -1891,6 +1936,8 @@
     applyRotationTransform(ctx, rotation, frame.w, frame.h);
     ctx.drawImage(state.image, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
     ctx.restore();
+
+    if (format.isBmp) return Promise.resolve(encodeBmpCanvas(canvas));
 
     return new Promise((resolve, reject) => {
       canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Canvas export failed")), format.mime, quality);
