@@ -7,7 +7,7 @@
     "enabled": true
   },
   "vars": {
-    "ALLOWED_ORIGINS": "http://localhost:8080,https://far-plain.github.io/FilmAutoClip/"
+    "ALLOWED_ORIGINS": "http://localhost:8080,https://far-plain.github.io"
   },
   "d1_databases": [
     {

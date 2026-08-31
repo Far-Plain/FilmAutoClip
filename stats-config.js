@@ -8,5 +8,5 @@
 window.FILM_FRAME_STATS = Object.freeze({
   enabled: true,
   apiBaseUrl: "https://film-frame-stats.far-plain.workers.dev",
-  appVersion: "2.3.0"
+  appVersion: "2.4.0"
 });

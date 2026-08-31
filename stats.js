@@ -11,6 +11,8 @@
   const maxFramesPerEvent = 5000;
   const numberFormatter = new Intl.NumberFormat("zh-CN");
   let flushPromise = null;
+  let visitPromise = null;
+  let visitAcknowledged = false;
   let initialized = false;
 
   const els = {
@@ -101,7 +103,7 @@
     }
     if (els.userCount) els.userCount.textContent = numberFormatter.format(users);
     if (els.frameCount) els.frameCount.textContent = numberFormatter.format(frames);
-    setUiState("ready", "全站匿名汇总 · 成功导出后更新");
+    setUiState("ready", "全站匿名汇总 · 打开页面后登记设备，成功导出后累计画格");
   }
 
   async function requestJson(path, options = {}) {
@@ -168,6 +170,38 @@
     return flushPromise;
   }
 
+  async function registerVisit() {
+    if (!enabled || !apiBaseUrl) return false;
+    if (visitAcknowledged) return true;
+    if (visitPromise) return visitPromise;
+
+    visitPromise = (async () => {
+      try {
+        const result = await requestJson("/api/events/visit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            device_id: getDeviceId(),
+            visited_at: new Date().toISOString(),
+            app_version: appVersion
+          }),
+          keepalive: true
+        });
+        visitAcknowledged = true;
+        if (result?.stats) renderStats(result.stats);
+        return true;
+      } catch (error) {
+        console.warn("Unable to register anonymous page visit", error);
+        setUiState("offline", "访问统计等待联网重试 · 不影响本地裁剪");
+        return false;
+      }
+    })().finally(() => {
+      visitPromise = null;
+    });
+
+    return visitPromise;
+  }
+
   function recordExport(frameCount) {
     if (!enabled) return Promise.resolve(false);
     const normalizedCount = Number(frameCount);
@@ -190,6 +224,7 @@
   }
 
   async function synchronize() {
+    await registerVisit();
     await flushPending();
     await refresh();
   }
@@ -211,6 +246,7 @@
 
   window.filmFrameStats = Object.freeze({
     init,
+    registerVisit,
     recordExport,
     refresh,
     flushPending,

@@ -45,3 +45,16 @@ python -m http.server 8080
 node tests/detection.test.js
 ```
 
+## 匿名使用统计
+
+- 胶友数：匿名浏览器设备打开页面后登记，同一浏览器重复打开或刷新只计算一次。
+- 裁剪数：只累计实际成功保存或触发下载的胶片画格。
+- 只发送随机设备 UUID、访问/导出时间、成功导出数量和应用版本；服务端仅保存加盐哈希后的设备标识，不上传图片、文件名、裁剪坐标或导出目录。
+
+统计服务更新后，需要在 `stats-worker` 目录依次运行：
+
+```powershell
+npm run db:migrate:remote
+npm run deploy
+```
+

@@ -28,6 +28,20 @@ export function validateEventPayload(payload) {
   return "";
 }
 
+export function validateVisitPayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "请求内容无效";
+  if (typeof payload.device_id !== "string" || !uuidPattern.test(payload.device_id)) return "device_id 无效";
+  if (payload.visited_at !== undefined) {
+    if (typeof payload.visited_at !== "string" || payload.visited_at.length > 40 || Number.isNaN(Date.parse(payload.visited_at))) {
+      return "visited_at 无效";
+    }
+  }
+  if (typeof payload.app_version !== "string" || !/^[0-9A-Za-z._-]{1,32}$/.test(payload.app_version)) {
+    return "app_version 无效";
+  }
+  return "";
+}
+
 export async function hashDeviceId(deviceId, salt) {
   if (typeof salt !== "string" || salt.length < 16) throw new Error("DEVICE_HASH_SALT is not configured");
   const input = new TextEncoder().encode(`${salt}:${deviceId}`);
@@ -126,6 +140,44 @@ async function handleExportEvent(request, env, origin) {
   }, { status: 200, origin });
 }
 
+async function handleVisitEvent(request, env, origin) {
+  const contentLength = Number(request.headers.get("Content-Length") || 0);
+  if (contentLength > maxRequestBytes) return json({ error: "请求内容过大" }, { status: 413, origin });
+
+  let payload;
+  try {
+    payload = await request.json();
+  } catch (_) {
+    return json({ error: "请求必须是有效的 JSON" }, { status: 400, origin });
+  }
+
+  const validationError = validateVisitPayload(payload);
+  if (validationError) return json({ error: validationError }, { status: 400, origin });
+
+  const deviceHash = await hashDeviceId(payload.device_id, env.DEVICE_HASH_SALT);
+  if (env.STATS_RATE_LIMITER) {
+    const rateLimit = await env.STATS_RATE_LIMITER.limit({ key: deviceHash });
+    if (!rateLimit.success) return json({ error: "请求过于频繁" }, { status: 429, origin });
+  }
+
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO anonymous_users (device_hash) VALUES (?1)"
+    ).bind(deviceHash),
+    env.DB.prepare(
+      `UPDATE stats_totals
+       SET user_count = (SELECT COUNT(*) FROM anonymous_users),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = 1`
+    )
+  ]);
+
+  return json({
+    accepted: Number(results[0]?.meta?.changes || 0) > 0,
+    stats: await getStats(env)
+  }, { status: 200, origin });
+}
+
 export default {
   async fetch(request, env) {
     try {
@@ -145,6 +197,12 @@ export default {
         const origin = allowedWriteOrigin(request, env);
         if (!origin) return json({ error: "来源不允许" }, { status: 403 });
         return await handleExportEvent(request, env, origin);
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/events/visit") {
+        const origin = allowedWriteOrigin(request, env);
+        if (!origin) return json({ error: "来源不允许" }, { status: 403 });
+        return await handleVisitEvent(request, env, origin);
       }
 
       return json({ error: "Not found" }, { status: 404 });

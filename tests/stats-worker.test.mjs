@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import {
   hashDeviceId,
   parseAllowedOrigins,
-  validateEventPayload
+  validateEventPayload,
+  validateVisitPayload
 } from "../stats-worker/src/index.js";
 import worker from "../stats-worker/src/index.js";
 
@@ -11,13 +12,22 @@ const event = {
   device_id: "038da6f1-86ad-46ed-a88e-828bb8d7574f",
   frame_count: 36,
   created_at: "2026-08-31T12:00:00.000Z",
-  app_version: "2.3.0"
+  app_version: "2.4.0"
+};
+
+const visit = {
+  device_id: event.device_id,
+  visited_at: "2026-08-31T11:59:00.000Z",
+  app_version: "2.4.0"
 };
 
 assert.equal(validateEventPayload(event), "", "a valid anonymous export event should pass");
 assert.match(validateEventPayload({ ...event, frame_count: 0 }), /frame_count/);
 assert.match(validateEventPayload({ ...event, device_id: "person@example.com" }), /device_id/);
 assert.match(validateEventPayload({ ...event, app_version: "<script>" }), /app_version/);
+assert.equal(validateVisitPayload(visit), "", "a valid page visit should pass");
+assert.match(validateVisitPayload({ ...visit, device_id: "not-a-device" }), /device_id/);
+assert.match(validateVisitPayload({ ...visit, visited_at: "not-a-date" }), /visited_at/);
 
 const origins = parseAllowedOrigins("http://localhost:8080, https://example.com/");
 assert.deepEqual(Array.from(origins), ["http://localhost:8080", "https://example.com"]);
@@ -71,9 +81,15 @@ class FakeD1 {
       }
       if (statement.sql.includes("INSERT OR IGNORE INTO anonymous_users")) {
         const [deviceHash, eventId] = statement.params;
-        const storedEvent = this.events.get(eventId);
-        if (storedEvent?.deviceHash === deviceHash) this.users.add(deviceHash);
-        return { meta: { changes: 1 } };
+        if (statement.sql.includes("WHERE EXISTS")) {
+          const storedEvent = this.events.get(eventId);
+          const before = this.users.size;
+          if (storedEvent?.deviceHash === deviceHash) this.users.add(deviceHash);
+          return { meta: { changes: this.users.size - before } };
+        }
+        const before = this.users.size;
+        this.users.add(deviceHash);
+        return { meta: { changes: this.users.size - before } };
       }
       if (statement.sql.includes("UPDATE stats_totals")) return { meta: { changes: 1 } };
       throw new Error(`Unexpected statement: ${statement.sql}`);
@@ -96,6 +112,25 @@ async function postExport(payload, origin = "https://film.example.com") {
   }), env);
 }
 
+async function postVisit(payload, origin = "https://film.example.com") {
+  return worker.fetch(new Request("https://stats.example.com/api/events/visit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: origin },
+    body: JSON.stringify(payload)
+  }), env);
+}
+
+const visitResponse = await postVisit(visit);
+const visitResult = await visitResponse.json();
+assert.equal(visitResponse.status, 200);
+assert.equal(visitResult.accepted, true, "opening the page should register a new anonymous device");
+assert.deepEqual(visitResult.stats, { users: 1, frames: 0, updated_at: "2026-08-31 12:00:00" });
+
+const repeatedVisitResponse = await postVisit(visit);
+const repeatedVisitResult = await repeatedVisitResponse.json();
+assert.equal(repeatedVisitResult.accepted, false, "refreshing on the same device must not increment users");
+assert.deepEqual(repeatedVisitResult.stats, visitResult.stats);
+
 const firstResponse = await postExport(event);
 const firstResult = await firstResponse.json();
 assert.equal(firstResponse.status, 200);
@@ -115,10 +150,17 @@ const nextResponse = await postExport({
 const nextResult = await nextResponse.json();
 assert.deepEqual(nextResult.stats, { users: 1, frames: 40, updated_at: "2026-08-31 12:00:00" });
 
+const otherVisitResponse = await postVisit({
+  ...visit,
+  device_id: "ec553328-1493-47d0-9040-ebce35e0d197"
+});
+const otherVisitResult = await otherVisitResponse.json();
+assert.deepEqual(otherVisitResult.stats, { users: 2, frames: 40, updated_at: "2026-08-31 12:00:00" });
+
 const forbiddenResponse = await postExport(event, "https://attacker.example");
 assert.equal(forbiddenResponse.status, 403, "unconfigured browser origins should be rejected");
 
 const totalsResponse = await worker.fetch(new Request("https://stats.example.com/api/stats"), env);
-assert.deepEqual(await totalsResponse.json(), nextResult.stats, "all devices should read the same totals");
+assert.deepEqual(await totalsResponse.json(), otherVisitResult.stats, "all devices should read the same totals");
 
-console.log("Statistics worker: validation, salted identity and idempotent global totals — OK");
+console.log("Statistics worker: page-open users, salted identity and idempotent totals — OK");
