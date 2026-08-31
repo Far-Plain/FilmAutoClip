@@ -1116,6 +1116,117 @@ input[type="range"]::-webkit-slider-thumb {
 
 .toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
 
+.community-stats {
+  position: relative;
+  width: calc(100% - var(--page-inset));
+  max-width: var(--page-width);
+  margin: 28px auto 0;
+  padding: 11px 0;
+  color: var(--paper);
+  background: var(--ink);
+  box-shadow: 8px 8px 0 var(--acid);
+  overflow: hidden;
+}
+
+.community-stats[hidden] { display: none; }
+
+.community-stats::before,
+.community-stats::after {
+  position: absolute;
+  z-index: 0;
+  left: 0;
+  width: 100%;
+  height: 7px;
+  content: "";
+  opacity: .65;
+  background: repeating-linear-gradient(90deg, transparent 0 15px, var(--paper) 15px 25px, transparent 25px 40px);
+}
+
+.community-stats::before { top: 3px; }
+.community-stats::after { bottom: 3px; }
+
+.community-stats-inner {
+  position: relative;
+  z-index: 1;
+  min-height: 174px;
+  padding: 28px clamp(24px, 4vw, 62px);
+  border-top: 1px solid #3e3d36;
+  border-bottom: 1px solid #3e3d36;
+  display: grid;
+  grid-template-columns: minmax(220px, .72fr) minmax(520px, 1.6fr);
+  grid-template-rows: 1fr auto;
+  column-gap: clamp(34px, 6vw, 94px);
+  align-items: center;
+}
+
+.community-stats-heading { grid-row: 1 / 3; }
+.community-stats-heading .eyebrow { margin: 0 0 9px; color: var(--acid); }
+
+.community-stats-heading h2 {
+  margin: 0;
+  color: var(--white);
+  font: 800 clamp(24px, 2.7vw, 42px)/1 var(--display);
+  letter-spacing: -.055em;
+}
+
+.community-stats-privacy {
+  max-width: 370px;
+  margin: 15px 0 0;
+  color: #aaa79f;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.community-stats-privacy span {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--acid);
+  box-shadow: 0 0 0 3px rgba(230, 255, 63, .12);
+}
+
+.community-stats-summary {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 10px;
+  color: #c1beb5;
+  font-size: clamp(12px, 1.2vw, 16px);
+  white-space: nowrap;
+}
+
+.community-stats-summary strong {
+  min-width: 1.2ch;
+  color: var(--acid);
+  font: 800 clamp(34px, 5.2vw, 76px)/.9 var(--display);
+  letter-spacing: -.055em;
+  font-variant-numeric: tabular-nums;
+}
+
+.community-stats-summary i {
+  width: 1px;
+  height: 45px;
+  margin: 0 clamp(4px, 1.5vw, 18px);
+  align-self: center;
+  background: #4a4942;
+  transform: rotate(12deg);
+}
+
+.community-stats-status {
+  margin: 14px 0 0;
+  color: #77746d;
+  font: 700 9px var(--display);
+  letter-spacing: .09em;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.community-stats[data-state="loading"] .community-stats-summary strong { animation: pulse 1.15s infinite; }
+.community-stats[data-state="offline"] .community-stats-summary strong { color: #aaa79f; }
+
 footer {
   width: calc(100% - var(--page-inset));
   max-width: var(--page-width);
@@ -1178,6 +1289,10 @@ footer span { color: var(--ink); font: 800 11px var(--display); }
   .frames-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .export-bar { grid-template-columns: minmax(0, 1fr) 250px; }
   .quality-control { display: none; }
+  .community-stats-inner { grid-template-columns: 1fr; grid-template-rows: auto; gap: 30px; }
+  .community-stats-heading { grid-row: auto; }
+  .community-stats-summary { justify-content: flex-start; }
+  .community-stats-status { margin-top: -20px; }
 }
 
 @media (max-width: 620px) {
@@ -1225,6 +1340,14 @@ footer span { color: var(--ink); font: 800 11px var(--display); }
   .export-bar { bottom: 8px; grid-template-columns: 1fr; gap: 12px; padding: 13px; }
   .export-summary { padding: 0 3px; }
   .export-button { width: 100%; }
+  .community-stats { margin-top: 18px; box-shadow: 5px 5px 0 var(--acid); }
+  .community-stats-inner { min-height: 0; padding: 28px 20px 26px; gap: 26px; }
+  .community-stats-heading h2 { font-size: 29px; }
+  .community-stats-privacy { font-size: 9px; }
+  .community-stats-summary { flex-wrap: wrap; gap: 6px 8px; white-space: normal; }
+  .community-stats-summary strong { font-size: clamp(38px, 13vw, 58px); }
+  .community-stats-summary i { width: 100%; height: 1px; margin: 5px 0 7px; transform: none; }
+  .community-stats-status { margin-top: -15px; text-align: left; }
   footer { justify-content: center; }
   footer p { display: none; }
 }

@@ -9,7 +9,7 @@
       content="在浏览器本地自动判断正像黑边或原始负像片基，逐格裁切并按原图片格式导出。"
     />
     <title>FILM / FRAME — 胶片自动分帧</title>
-    <link rel="stylesheet" href="styles.css?v=2.2.4" />
+    <link rel="stylesheet" href="styles.css?v=2.3.0" />
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
@@ -223,6 +223,28 @@
       </section>
     </main>
 
+    <section class="community-stats" id="communityStats" aria-labelledby="communityStatsTitle" hidden>
+      <div class="community-stats-inner">
+        <div class="community-stats-heading">
+          <p class="eyebrow">COMMUNITY ROLL · 04</p>
+          <h2 id="communityStatsTitle">每一格，都算数。</h2>
+          <p class="community-stats-privacy">
+            <span aria-hidden="true"></span>仅记录匿名设备与成功导出数量，不上传图片或文件信息
+          </p>
+        </div>
+        <p class="community-stats-summary" id="communityStatsSummary" aria-live="polite" aria-busy="true">
+          <span>已有</span>
+          <strong id="communityUserCount">—</strong>
+          <span>位胶友使用</span>
+          <i aria-hidden="true"></i>
+          <span>累计裁剪</span>
+          <strong id="communityFrameCount">—</strong>
+          <span>张胶片画格</span>
+        </p>
+        <p class="community-stats-status" id="communityStatsStatus">正在读取胶片社区计数</p>
+      </div>
+    </section>
+
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
     <footer>
@@ -232,6 +254,8 @@
 
     <script src="node_modules/pako/dist/pako.min.js"></script>
     <script src="node_modules/utif/UTIF.js"></script>
-    <script src="app.js?v=2.2.4"></script>
+    <script src="stats-config.js?v=2.3.0"></script>
+    <script src="stats.js?v=2.3.0"></script>
+    <script src="app.js?v=2.3.0"></script>
   </body>
 </html>

@@ -1,0 +1,15 @@
+{
+  "name": "film-frame-stats-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply film-frame-stats --local",
+    "db:migrate:remote": "wrangler d1 migrations apply film-frame-stats --remote"
+  },
+  "devDependencies": {
+    "wrangler": "^4.36.0"
+  }
+}

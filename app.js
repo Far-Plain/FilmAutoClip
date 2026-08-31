@@ -1963,6 +1963,7 @@
       console.error(error);
       showToast(error?.userMessage || "导出失败。图片过大时，可减少所选画格后重试。");
     } finally {
+      if (exportedCount > 0) void window.filmFrameStats?.recordExport(exportedCount);
       const originalJob = state.jobs.find((job) => job.id === originalJobId) || state.jobs[0];
       if (originalJob && state.activeJobId !== originalJob.id) {
         try {

@@ -1,10 +1,10 @@
 {
   "name": "film-frame",
-  "version": "2.2.4",
+  "version": "2.3.0",
   "private": true,
   "description": "Local positive and negative film scan frame detector with TIFF and BMP support",
   "scripts": {
-    "test": "node tests/detection.test.js"
+    "test": "node tests/detection.test.js && node tests/stats.test.js && node tests/stats-worker.test.mjs"
   },
   "dependencies": {
     "pako": "1.0.11",

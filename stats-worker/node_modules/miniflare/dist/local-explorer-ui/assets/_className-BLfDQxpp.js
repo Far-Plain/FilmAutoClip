@@ -1,0 +1,1 @@
+import{_t as e}from"./index-BmatY_8c.js";var t=e;export{t as notFoundComponent};
