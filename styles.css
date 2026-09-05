@@ -1124,9 +1124,7 @@ input[type="range"]::-webkit-slider-thumb {
 .no-frames span { font-size: 11px; line-height: 1.45; }
 
 .export-bar {
-  position: sticky;
-  z-index: 5;
-  bottom: 16px;
+  position: static;
   min-height: 96px;
   padding: 12px 14px 12px 18px;
   border: 0;
@@ -1354,7 +1352,7 @@ footer span { color: var(--ink); font: 800 11px var(--display); }
   .frames-grid { grid-template-columns: 1fr; }
   .frame-preview { height: clamp(250px, 72vw, 340px); }
   .frame-info { min-height: 64px; }
-  .export-bar { bottom: 8px; grid-template-columns: 1fr; gap: 12px; padding: 13px; }
+  .export-bar { grid-template-columns: 1fr; gap: 12px; padding: 13px; }
   .export-summary { padding: 0 3px; }
   .export-button { grid-column: 1; grid-row: auto; width: 100%; }
   .community-stats { margin-top: 20px; padding-bottom: 20px; }
