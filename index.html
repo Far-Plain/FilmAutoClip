@@ -8,43 +8,111 @@
       name="description"
       content="在浏览器本地自动判断正像黑边或原始负像片基，逐格裁切并按原图片格式导出。"
     />
-    <title>FILM / FRAME — 胶片自动分帧</title>
-    <link rel="stylesheet" href="styles.css?v=2.4.0" />
+    <title>AutoClip — 胶片自动分帧</title>
+    <link rel="stylesheet" href="styles.css?v=2.9.2" />
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>
 
     <header class="site-header">
-      <a class="brand" href="#" aria-label="FILM / FRAME 首页">
+      <a class="brand" href="#" aria-label="AutoClip 首页">
         <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span>FILM <b>/</b> FRAME</span>
+        <span>Auto<b>Clip</b></span>
       </a>
       <div class="local-badge"><span></span>仅在本机处理</div>
     </header>
 
     <main>
       <section class="intro" id="intro">
-        <p class="eyebrow">NEGATIVE CUTTING ROOM · 01</p>
-        <h1>让黑边成为<br /><em>天然的裁切线。</em></h1>
-        <p class="intro-copy">
-          批量导入原始负像或正像扫描图，自动采样片基并校验裁切效果。确认画面后，保持各自原格式直接导出。
-        </p>
+        <div class="intro-stage">
+          <div class="film-showcase" role="img" aria-label="一卷展开的 135 胶片，经典黑白摄影画面正在缓慢循环">
+            <svg
+              class="film-hero"
+              id="filmHero"
+              viewBox="0 0 1600 360"
+              preserveAspectRatio="xMinYMid slice"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <defs>
+                <filter id="filmSoftShadow" x="-10%" y="-25%" width="120%" height="170%">
+                  <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#171714" flood-opacity=".11" />
+                </filter>
+                <filter id="labelPaperTexture" x="-5%" y="-5%" width="110%" height="110%">
+                  <feTurbulence type="fractalNoise" baseFrequency=".72" numOctaves="2" seed="17" result="grain" />
+                  <feColorMatrix in="grain" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 .045 0" result="softGrain" />
+                  <feBlend in="SourceGraphic" in2="softGrain" mode="multiply" />
+                </filter>
+                <pattern id="orangeHalftone" width="8" height="8" patternUnits="userSpaceOnUse">
+                  <circle cx="2" cy="2" r="1.6" fill="#e95a35" />
+                </pattern>
+              </defs>
 
-        <label class="drop-zone" id="dropZone" for="fileInput">
-          <input id="fileInput" type="file" multiple accept="image/jpeg,image/png,image/webp,image/bmp,image/tiff,image/x-tiff,.bmp,.tif,.tiff" />
-          <span class="drop-icon" aria-hidden="true">
-            <svg viewBox="0 0 48 48" fill="none">
-              <path d="M24 33V11m0 0-8 8m8-8 8 8M9 31v6a4 4 0 0 0 4 4h22a4 4 0 0 0 4-4v-6" />
+              <g class="film-svg-decoration">
+                <circle cx="315" cy="140" r="128" fill="#efc55a" opacity=".13" />
+                <circle cx="315" cy="140" r="128" fill="url(#orangeHalftone)" opacity=".42" />
+              </g>
+
+              <path
+                id="filmMotionPath"
+                class="film-motion-path"
+                d="M 205 202 C 470 204 675 197 850 174 C 1060 147 1260 148 1620 168"
+              />
+              <path class="film-shadow-path" d="M 205 202 C 470 204 675 197 850 174 C 1060 147 1260 148 1620 168" />
+              <path class="film-register film-register-cyan" d="M 205 202 C 470 204 675 197 850 174 C 1060 147 1260 148 1620 168" />
+              <path class="film-register film-register-red" d="M 205 202 C 470 204 675 197 850 174 C 1060 147 1260 148 1620 168" />
+              <path class="film-body-path" d="M 205 202 C 470 204 675 197 850 174 C 1060 147 1260 148 1620 168" />
+
+              <g id="filmPhotoLayer" class="film-svg-layer"></g>
+              <g id="filmSprocketLayer" class="film-svg-layer"></g>
+
+              <g class="film-canister-svg" filter="url(#labelPaperTexture)">
+                <rect x="34" y="60" width="202" height="276" rx="9" fill="#171714" />
+                <rect x="42" y="96" width="186" height="205" fill="#f3c51f" />
+                <rect x="42" y="96" width="186" height="45" fill="#dc4b31" />
+                <rect x="42" y="301" width="186" height="17" fill="#171714" />
+
+                <rect x="188" y="96" width="8" height="205" fill="#267aa7" />
+                <rect x="196" y="96" width="6" height="205" fill="#e6902f" />
+                <rect x="202" y="96" width="8" height="205" fill="#d84931" />
+                <rect x="210" y="96" width="6" height="205" fill="#4d8e62" />
+
+                <rect x="100" y="25" width="70" height="37" rx="4" fill="#171714" />
+                <ellipse cx="135" cy="62" rx="104" ry="16" fill="#171714" />
+                <ellipse cx="135" cy="60" rx="76" ry="9" fill="#e8e3d8" />
+                <ellipse cx="135" cy="60" rx="57" ry="6" fill="#171714" />
+
+                <text x="58" y="125" class="canister-svg-stock">ALL-PURPOSE COLOR</text>
+                <text x="52" y="227" class="canister-svg-speed">400</text>
+                <text x="87" y="252" class="canister-svg-detail">135 · 36 EXP.</text>
+                <line x1="62" y1="275" x2="178" y2="275" stroke="#171714" stroke-width="1" />
+                <text x="115" y="294" text-anchor="middle" class="canister-svg-name">AutoClip</text>
+              </g>
             </svg>
-          </span>
-          <span class="drop-title">拖入一组胶片扫描图</span>
-          <span class="drop-subtitle">支持同时选择多张 · JPG / PNG / WEBP / BMP / TIF · 图片不会离开设备</span>
-        </label>
+          </div>
 
-        <div class="process-note" aria-label="处理流程">
-          <span><b>01</b> 导入原图</span><i></i>
-          <span><b>02</b> 黑边分帧</span><i></i>
-          <span><b>03</b> 校正导出</span>
+          <div class="intro-content">
+            <p class="intro-copy">
+              批量导入原始负像或正像扫描图，自动采样片基并校验裁切效果。确认画面后，保持各自原格式直接导出。
+            </p>
+
+            <label class="drop-zone" id="dropZone" for="fileInput">
+              <input id="fileInput" type="file" multiple accept="image/jpeg,image/png,image/webp,image/bmp,image/tiff,image/x-tiff,.bmp,.tif,.tiff" />
+              <span class="drop-icon" aria-hidden="true">
+                <svg viewBox="0 0 48 48" fill="none">
+                  <path d="M24 33V11m0 0-8 8m8-8 8 8M9 31v6a4 4 0 0 0 4 4h22a4 4 0 0 0 4-4v-6" />
+                </svg>
+              </span>
+              <span class="drop-title">拖入一组胶片扫描图</span>
+              <span class="drop-subtitle">支持同时选择多张 · JPG / PNG / WEBP / BMP / TIF · 图片不会离开设备</span>
+            </label>
+
+            <div class="process-note" aria-label="处理流程">
+              <span><b>01</b> 导入原图</span><i></i>
+              <span><b>02</b> 黑边分帧</span><i></i>
+              <span><b>03</b> 校正导出</span>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -74,6 +142,10 @@
               </div>
               <div class="viewer-tools">
                 <div class="image-meta" id="imageMeta"></div>
+                <div class="canvas-edit-tools" role="toolbar" aria-label="裁框编辑工具">
+                  <button id="undoFrameButton" type="button" title="撤销裁框修改（Ctrl/⌘ + Z）" disabled>撤销</button>
+                  <button id="redoFrameButton" type="button" title="重做裁框修改（Ctrl/⌘ + Shift + Z）" disabled>重做</button>
+                </div>
                 <div class="source-rotation" aria-label="原图查看角度">
                   <button id="sourceRotateLeft" type="button" aria-label="原图向左旋转 90 度" title="向左旋转查看">↶</button>
                   <output id="sourceRotationLabel">0°</output>
@@ -83,7 +155,7 @@
             </div>
 
             <div class="canvas-shell" id="canvasShell">
-              <canvas id="sourceCanvas" aria-label="胶片原图与检测框"></canvas>
+              <canvas id="sourceCanvas" tabindex="0" aria-label="胶片原图与检测框，可拖动裁框并用方向键微调"></canvas>
               <div class="scanning-line" id="scanningLine"></div>
               <div class="empty-canvas" id="canvasMessage">正在显影…</div>
             </div>
@@ -91,7 +163,7 @@
             <div class="canvas-legend">
               <span><i class="legend-frame"></i>已识别画格</span>
               <span><i class="legend-selected"></i>当前画格</span>
-              <span>点击画面可选择 · 原图旋转仅影响查看</span>
+              <span>拖动框内移动 · 拖动控制点缩放 · 原图旋转仅影响查看</span>
             </div>
           </section>
 
@@ -155,6 +227,10 @@
               <span>重新识别画格</span><kbd>R</kbd>
             </button>
 
+            <button class="manual-add-button" id="addFrameButton" type="button" aria-pressed="false" title="在原图上拖动添加一个画格">
+              手动添加画格
+            </button>
+
             <div class="detected-status" id="detectedStatus" aria-live="polite">
               <span class="status-dot"></span>
               <p><b>等待检测</b><small>参数修改后可重新识别</small></p>
@@ -167,15 +243,19 @@
               <div class="frame-editor-content" id="frameEditorContent" hidden>
                 <div class="editor-title">
                   <span>画格 <b id="selectedFrameNumber">01</b></span>
-                  <button id="removeFrameButton" type="button">排除此格</button>
+                  <div class="editor-actions">
+                    <button id="duplicateFrameButton" type="button">复制此框</button>
+                    <button id="removeFrameButton" type="button">排除此格</button>
+                  </div>
                 </div>
                 <div class="coordinate-grid">
                   <label>X <input id="cropX" type="number" min="0" /></label>
                   <label>Y <input id="cropY" type="number" min="0" /></label>
                   <label>宽 <input id="cropW" type="number" min="8" /></label>
                   <label>高 <input id="cropH" type="number" min="8" /></label>
+                  <label class="crop-angle-field">微调 <input id="cropAngle" type="number" min="-5" max="5" step="0.1" value="0" /><span>°</span></label>
                 </div>
-                <p>数值对应原图像素，可用于逐边精确校正。</p>
+                <p id="frameEditorHelp">可直接拖动裁框；数值对应原图像素，微调角度会应用到预览与导出。</p>
               </div>
             </div>
           </aside>
@@ -234,14 +314,16 @@
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
     <footer>
-      <span>FILM / FRAME</span>
+      <span>AutoClip</span>
       <p>无需上传。像素只停留在你的浏览器中。</p>
     </footer>
 
     <script src="node_modules/pako/dist/pako.min.js"></script>
     <script src="node_modules/utif/UTIF.js"></script>
-    <script src="stats-config.js?v=2.4.0"></script>
+    <script src="stats-config.js?v=2.5.0"></script>
     <script src="stats.js?v=2.4.0"></script>
-    <script src="app.js?v=2.4.0"></script>
+    <script src="image-manifest.js?v=2.7.0"></script>
+    <script src="film-gallery.js?v=2.7.0"></script>
+    <script src="app.js?v=2.5.3"></script>
   </body>
 </html>

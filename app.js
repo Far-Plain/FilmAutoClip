@@ -18,6 +18,9 @@
     canvasShell: $("#canvasShell"),
     sourceCanvas: $("#sourceCanvas"),
     canvasMessage: $("#canvasMessage"),
+    undoFrameButton: $("#undoFrameButton"),
+    redoFrameButton: $("#redoFrameButton"),
+    addFrameButton: $("#addFrameButton"),
     sourceMode: $("#sourceMode"),
     filmBaseControl: $("#filmBaseControl"),
     filmBaseSwatch: $("#filmBaseSwatch"),
@@ -39,11 +42,14 @@
     frameEditorPlaceholder: $("#frameEditorPlaceholder"),
     frameEditorContent: $("#frameEditorContent"),
     selectedFrameNumber: $("#selectedFrameNumber"),
+    duplicateFrameButton: $("#duplicateFrameButton"),
     removeFrameButton: $("#removeFrameButton"),
     cropX: $("#cropX"),
     cropY: $("#cropY"),
     cropW: $("#cropW"),
     cropH: $("#cropH"),
+    cropAngle: $("#cropAngle"),
+    frameEditorHelp: $("#frameEditorHelp"),
     framesGrid: $("#framesGrid"),
     noFrames: $("#noFrames"),
     selectionActions: $(".selection-actions"),
@@ -77,6 +83,9 @@
     exportDirectoryHandle: null,
     sourceViewRotation: 0,
     baseSamplingActive: false,
+    frameAddMode: false,
+    cropInteraction: null,
+    draftFrame: null,
     busy: false
   };
 
@@ -91,6 +100,7 @@
   const settingsDatabaseName = "film-frame-settings";
   const settingsStoreName = "file-handles";
   const exportDirectoryKey = "last-export-directory";
+  const frameHistoryLimit = 50;
 
   function bindEvents() {
     els.fileInput.addEventListener("change", (event) => {
@@ -127,9 +137,17 @@
     els.filmBaseClearButton.addEventListener("click", clearFilmBaseSamples);
     els.sourceRotateLeft.addEventListener("click", () => rotateSourceView(-90));
     els.sourceRotateRight.addEventListener("click", () => rotateSourceView(90));
-    els.sourceCanvas.addEventListener("click", selectFrameFromCanvas);
+    els.undoFrameButton.addEventListener("click", undoFrameEdit);
+    els.redoFrameButton.addEventListener("click", redoFrameEdit);
+    els.addFrameButton.addEventListener("click", () => setFrameAddMode(!state.frameAddMode));
+    els.sourceCanvas.addEventListener("pointerdown", beginCropInteraction);
+    els.sourceCanvas.addEventListener("pointermove", updateCropInteraction);
+    els.sourceCanvas.addEventListener("pointerup", finishCropInteraction);
+    els.sourceCanvas.addEventListener("pointercancel", cancelCropInteraction);
+    els.sourceCanvas.addEventListener("pointerleave", updateCanvasCursor);
     els.selectAllButton.addEventListener("click", () => setAllFrames(true));
     els.clearSelectionButton.addEventListener("click", () => setAllFrames(false));
+    els.duplicateFrameButton.addEventListener("click", duplicateSelectedFrame);
     els.removeFrameButton.addEventListener("click", removeSelectedFrame);
     els.exportButton.addEventListener("click", exportSelected);
 
@@ -140,11 +158,32 @@
     [els.cropX, els.cropY, els.cropW, els.cropH].forEach((input) => {
       input.addEventListener("change", updateSelectedCrop);
     });
+    els.cropAngle.addEventListener("change", updateSelectedFineRotation);
 
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && state.baseSamplingActive) {
+      if (event.key === "Escape" && (state.baseSamplingActive || state.frameAddMode || state.cropInteraction)) {
         event.preventDefault();
-        stopFilmBaseSampling();
+        if (state.baseSamplingActive) stopFilmBaseSampling();
+        if (state.frameAddMode) setFrameAddMode(false);
+        if (state.cropInteraction) cancelCropInteraction();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && !isFormControl(event.target)) {
+        if (event.key.toLowerCase() === "z") {
+          event.preventDefault();
+          if (event.shiftKey) redoFrameEdit();
+          else undoFrameEdit();
+          return;
+        }
+        if (event.key.toLowerCase() === "y") {
+          event.preventDefault();
+          redoFrameEdit();
+          return;
+        }
+      }
+      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key) && state.selectedIndex >= 0 && !isFormControl(event.target)) {
+        event.preventDefault();
+        nudgeSelectedFrame(event.key, event.shiftKey ? 10 : 1);
         return;
       }
       if (event.key.toLowerCase() === "r" && state.image && !isFormControl(event.target)) {
@@ -155,6 +194,7 @@
 
     window.addEventListener("resize", drawSourceOverlay);
     updateRangeLabels();
+    updateFrameHistoryButtons();
     if (supportsDirectoryExport()) void restoreExportDirectoryHandle();
   }
 
@@ -180,6 +220,8 @@
       baseSamples: [],
       filmBase: null,
       detectionMode: null,
+      undoStack: [],
+      redoStack: [],
       status: "pending",
       error: null,
       meta: null,
@@ -234,7 +276,14 @@
     state.tiffSource = null;
     state.sourceViewRotation = 0;
     state.baseSamplingActive = false;
+    state.frameAddMode = false;
+    state.cropInteraction = null;
+    state.draftFrame = null;
     els.canvasShell?.classList.remove("is-base-sampling");
+    els.canvasShell?.classList.remove("is-adding-frame", "is-editing-frame");
+    els.addFrameButton?.classList.remove("is-active");
+    els.addFrameButton?.setAttribute("aria-pressed", "false");
+    if (els.addFrameButton) els.addFrameButton.textContent = "手动添加画格";
     if (els.framesGrid) els.framesGrid.replaceChildren();
     if (els.sourceCanvas) {
       els.sourceCanvas.width = 1;
@@ -276,7 +325,7 @@
       try {
         await loadJobRuntime(job, { render: true });
         await nextPaint();
-        performActiveDetection();
+        performActiveDetection({ recordHistory: false });
       } catch (error) {
         console.error(error);
         job.status = "error";
@@ -336,6 +385,7 @@
       renderAll();
       renderJobDetectionStatus(job);
     }
+    updateFrameHistoryButtons();
     renderJobQueue();
   }
 
@@ -450,6 +500,7 @@
   async function detectFrames() {
     if (!state.analysis || state.busy) return;
     if (state.baseSamplingActive) stopFilmBaseSampling();
+    if (state.frameAddMode) setFrameAddMode(false);
     setBusy(true, "正在分析边界与片基颜色…");
     await nextPaint();
 
@@ -473,9 +524,10 @@
     }
   }
 
-  function performActiveDetection() {
+  function performActiveDetection({ recordHistory = true } = {}) {
     const job = getActiveJob();
     if (!job || !state.analysis) return null;
+    const previousSnapshot = recordHistory ? createFrameSnapshot() : null;
     const options = readDetectionOptions();
     const manualFilmBase = getManualFilmBase(state.analysis, job.baseSamples);
     const result = runDetection(state.analysis, manualFilmBase ? { ...options, filmBase: manualFilmBase } : options);
@@ -485,7 +537,8 @@
         ...rect,
         id: `${job.id}-${Date.now()}-${index}`,
         checked: true,
-        previewRotation: defaultPreviewRotation(rect)
+        previewRotation: defaultPreviewRotation(rect),
+        fineRotation: 0
       };
     });
     state.selectedIndex = state.frames.length ? 0 : -1;
@@ -502,6 +555,7 @@
       }
       : null;
     job.detectionMode = result.detectionMode;
+    if (previousSnapshot) commitFrameHistory(previousSnapshot);
 
     if (state.frames.length) {
       const perTrack = result.stripFrameCounts.length > 1
@@ -1368,6 +1422,68 @@
     return { x, y, w: right - x, h: bottom - y };
   }
 
+  function cloneFrame(frame) {
+    return { ...frame };
+  }
+
+  function createFrameSnapshot() {
+    return {
+      frames: state.frames.map(cloneFrame),
+      selectedIndex: state.selectedIndex
+    };
+  }
+
+  function restoreFrameSnapshot(snapshot) {
+    if (!snapshot) return;
+    state.frames = snapshot.frames.map(cloneFrame);
+    state.selectedIndex = state.frames.length
+      ? clamp(snapshot.selectedIndex, 0, state.frames.length - 1)
+      : -1;
+    const job = getActiveJob();
+    if (job) {
+      job.frames = state.frames;
+      job.selectedIndex = state.selectedIndex;
+    }
+    renderAll();
+  }
+
+  function commitFrameHistory(previousSnapshot) {
+    const job = getActiveJob();
+    if (!job || !previousSnapshot) return;
+    job.undoStack ||= [];
+    job.redoStack ||= [];
+    job.undoStack.push(previousSnapshot);
+    if (job.undoStack.length > frameHistoryLimit) job.undoStack.shift();
+    job.redoStack.length = 0;
+    syncActiveJobState();
+    updateFrameHistoryButtons();
+  }
+
+  function undoFrameEdit() {
+    const job = getActiveJob();
+    if (!job?.undoStack?.length || state.busy) return;
+    job.redoStack ||= [];
+    job.redoStack.push(createFrameSnapshot());
+    restoreFrameSnapshot(job.undoStack.pop());
+    showToast("已撤销上一步裁框修改");
+  }
+
+  function redoFrameEdit() {
+    const job = getActiveJob();
+    if (!job?.redoStack?.length || state.busy) return;
+    job.undoStack ||= [];
+    job.undoStack.push(createFrameSnapshot());
+    restoreFrameSnapshot(job.redoStack.pop());
+    showToast("已重做裁框修改");
+  }
+
+  function updateFrameHistoryButtons() {
+    const job = getActiveJob();
+    els.undoFrameButton.disabled = state.busy || !job?.undoStack?.length;
+    els.redoFrameButton.disabled = state.busy || !job?.redoStack?.length;
+    els.addFrameButton.disabled = state.busy || !state.image;
+  }
+
   function renderAll() {
     syncActiveJobState();
     drawSourceOverlay();
@@ -1379,6 +1495,7 @@
     els.noFrames.hidden = hasFrames;
     els.selectionActions.hidden = !hasFrames;
     renderJobQueue();
+    updateFrameHistoryButtons();
   }
 
   function drawSourceOverlay() {
@@ -1417,7 +1534,32 @@
       ctx.fillRect(x + 1, y + 1, labelW, labelH);
       ctx.fillStyle = "#171714";
       ctx.fillText(label, x + 8, y + labelH - 6);
+      if (active) {
+        const handleSize = Math.max(7, Math.min(sourceWidth, sourceHeight) / 105);
+        ctx.setLineDash([]);
+        ctx.fillStyle = "#f7f3e9";
+        ctx.strokeStyle = "#f15b35";
+        getFrameHandlePoints({ x, y, w, h }).forEach(({ x: handleX, y: handleY }) => {
+          ctx.fillRect(handleX - handleSize / 2, handleY - handleSize / 2, handleSize, handleSize);
+          ctx.strokeRect(handleX - handleSize / 2, handleY - handleSize / 2, handleSize, handleSize);
+        });
+      }
     });
+
+    if (state.draftFrame) {
+      const draft = {
+        x: state.draftFrame.x / state.scaleX,
+        y: state.draftFrame.y / state.scaleY,
+        w: state.draftFrame.w / state.scaleX,
+        h: state.draftFrame.h / state.scaleY
+      };
+      ctx.setLineDash([10, 7]);
+      ctx.lineWidth = Math.max(2, Math.min(sourceWidth, sourceHeight) / 560);
+      ctx.fillStyle = "rgba(241, 91, 53, .16)";
+      ctx.strokeStyle = "#f15b35";
+      ctx.fillRect(draft.x, draft.y, draft.w, draft.h);
+      ctx.strokeRect(draft.x, draft.y, draft.w, draft.h);
+    }
 
     const samples = getActiveJob()?.baseSamples || [];
     samples.forEach((sample, index) => {
@@ -1460,14 +1602,19 @@
 
       const info = document.createElement("div");
       info.className = "frame-info";
-      info.innerHTML = `<p><b>FRAME ${String(index + 1).padStart(2, "0")}</b><small>输出 ${outputSize.width} × ${outputSize.height} PX</small></p><div class="frame-tools"><div class="frame-rotation" aria-label="画格 ${index + 1} 预览与导出角度"><button class="frame-rotate-button" data-rotate="-90" type="button" aria-label="向左旋转预览与导出" title="向左旋转预览与导出">↶</button><output>${normalizeRotation(frame.previewRotation)}°</output><button class="frame-rotate-button" data-rotate="90" type="button" aria-label="向右旋转预览与导出" title="向右旋转预览与导出">↷</button></div><button class="frame-check" type="button" aria-label="${frame.checked ? "取消选择" : "选择"}画格 ${index + 1}"></button></div>`;
+      const fineRotationNote = normalizeFineRotation(frame.fineRotation)
+        ? ` · 微调 ${formatSignedAngle(frame.fineRotation)}`
+        : "";
+      info.innerHTML = `<p><b>FRAME ${String(index + 1).padStart(2, "0")}</b><small>输出 ${outputSize.width} × ${outputSize.height} PX${fineRotationNote}</small></p><div class="frame-tools"><div class="frame-rotation" aria-label="画格 ${index + 1} 预览与导出角度"><button class="frame-rotate-button" data-rotate="-90" type="button" aria-label="向左旋转预览与导出" title="向左旋转预览与导出">↶</button><output>${normalizeRotation(frame.previewRotation)}°</output><button class="frame-rotate-button" data-rotate="90" type="button" aria-label="向右旋转预览与导出" title="向右旋转预览与导出">↷</button></div><button class="frame-check" type="button" aria-label="${frame.checked ? "取消选择" : "选择"}画格 ${index + 1}"></button></div>`;
       card.append(preview, info);
 
       info.querySelectorAll(".frame-rotate-button").forEach((button) => {
         button.addEventListener("click", (event) => {
           event.stopPropagation();
           state.selectedIndex = index;
+          const previousSnapshot = createFrameSnapshot();
           frame.previewRotation = normalizeRotation(frame.previewRotation + Number(button.dataset.rotate));
+          commitFrameHistory(previousSnapshot);
           updateFramePreviewCard(card, frame, index);
         });
       });
@@ -1505,12 +1652,7 @@
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
     ctx.scale(scale, scale);
-    applyRotationTransform(ctx, rotation, frame.w, frame.h);
-    ctx.drawImage(
-      state.image,
-      frame.x, frame.y, frame.w, frame.h,
-      0, 0, frame.w, frame.h
-    );
+    drawFrameImage(ctx, state.image, frame, rotation);
     return canvas;
   }
 
@@ -1519,7 +1661,10 @@
     const outputSize = getFrameOutputSize(frame);
     card.querySelector(".frame-preview").replaceChildren(nextCanvas);
     card.querySelector(".frame-rotation output").value = `${normalizeRotation(frame.previewRotation)}°`;
-    card.querySelector(".frame-info p small").textContent = `输出 ${outputSize.width} × ${outputSize.height} PX`;
+    const fineRotationNote = normalizeFineRotation(frame.fineRotation)
+      ? ` · 微调 ${formatSignedAngle(frame.fineRotation)}`
+      : "";
+    card.querySelector(".frame-info p small").textContent = `输出 ${outputSize.width} × ${outputSize.height} PX${fineRotationNote}`;
     card.setAttribute("aria-label", `画格 ${index + 1}，输出 ${outputSize.width} × ${outputSize.height} 像素`);
     els.framesGrid.querySelectorAll(".frame-card").forEach((item, itemIndex) => {
       item.classList.toggle("is-active", itemIndex === index);
@@ -1540,24 +1685,311 @@
     els.cropY.value = frame.y;
     els.cropW.value = frame.w;
     els.cropH.value = frame.h;
+    els.cropAngle.value = normalizeFineRotation(frame.fineRotation);
+    els.cropAngle.disabled = Boolean(state.format?.isTiff);
+    els.cropAngle.title = state.format?.isTiff ? "TIFF 为保留原始 8/16-bit 样本，仅支持 90° 旋转" : "顺时针为正，逆时针为负";
+    els.frameEditorHelp.textContent = state.format?.isTiff
+      ? "可直接拖动裁框；TIFF 为保留原始样本，仅支持 90° 旋转。"
+      : "可直接拖动裁框；数值对应原图像素，微调角度会应用到预览与导出。";
   }
 
-  function selectFrameFromCanvas(event) {
-    if (!state.analysis) return;
-    const sourcePoint = getSourceCanvasPoint(event);
+  function getFrameHandlePoints(frame) {
+    const centerX = frame.x + frame.w / 2;
+    const centerY = frame.y + frame.h / 2;
+    const right = frame.x + frame.w;
+    const bottom = frame.y + frame.h;
+    return [
+      { name: "nw", x: frame.x, y: frame.y },
+      { name: "n", x: centerX, y: frame.y },
+      { name: "ne", x: right, y: frame.y },
+      { name: "e", x: right, y: centerY },
+      { name: "se", x: right, y: bottom },
+      { name: "s", x: centerX, y: bottom },
+      { name: "sw", x: frame.x, y: bottom },
+      { name: "w", x: frame.x, y: centerY }
+    ];
+  }
+
+  function getOriginalCanvasPoint(event) {
+    const point = getSourceCanvasPoint(event);
+    return {
+      x: clamp(Math.round(point.x * state.scaleX), 0, state.image.naturalWidth),
+      y: clamp(Math.round(point.y * state.scaleY), 0, state.image.naturalHeight)
+    };
+  }
+
+  function getCanvasHandleTolerance() {
+    const bounds = els.sourceCanvas.getBoundingClientRect();
+    const analysisUnitsPerCssPixel = Math.max(
+      els.sourceCanvas.width / Math.max(1, bounds.width),
+      els.sourceCanvas.height / Math.max(1, bounds.height)
+    );
+    return Math.max(8, analysisUnitsPerCssPixel * Math.max(state.scaleX, state.scaleY) * 10);
+  }
+
+  function hitTestFrameHandle(frame, point, tolerance) {
+    return getFrameHandlePoints(frame).find((handle) => (
+      Math.abs(handle.x - point.x) <= tolerance
+      && Math.abs(handle.y - point.y) <= tolerance
+    ))?.name || "";
+  }
+
+  function hitTestFrame(point) {
+    for (let index = state.frames.length - 1; index >= 0; index -= 1) {
+      const frame = state.frames[index];
+      if (point.x >= frame.x && point.x <= frame.x + frame.w && point.y >= frame.y && point.y <= frame.y + frame.h) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  function frameFromPoints(start, end) {
+    const left = Math.min(start.x, end.x);
+    const top = Math.min(start.y, end.y);
+    return {
+      x: Math.round(left),
+      y: Math.round(top),
+      w: Math.round(Math.abs(end.x - start.x)),
+      h: Math.round(Math.abs(end.y - start.y))
+    };
+  }
+
+  function resizeFrameFromPointer(frame, handle, point, imageWidth, imageHeight) {
+    let left = frame.x;
+    let top = frame.y;
+    let right = frame.x + frame.w;
+    let bottom = frame.y + frame.h;
+    if (handle.includes("w")) left = clamp(point.x, 0, right - 8);
+    if (handle.includes("e")) right = clamp(point.x, left + 8, imageWidth);
+    if (handle.includes("n")) top = clamp(point.y, 0, bottom - 8);
+    if (handle.includes("s")) bottom = clamp(point.y, top + 8, imageHeight);
+    return {
+      ...frame,
+      x: Math.round(left),
+      y: Math.round(top),
+      w: Math.round(right - left),
+      h: Math.round(bottom - top)
+    };
+  }
+
+  function beginCropInteraction(event) {
+    if (!state.analysis || !state.image || state.busy || event.button > 0) return;
+    event.preventDefault();
+    els.sourceCanvas.focus({ preventScroll: true });
     if (state.baseSamplingActive) {
-      addFilmBaseSample(sourcePoint);
+      addFilmBaseSample(getSourceCanvasPoint(event));
       return;
     }
-    const x = sourcePoint.x * state.scaleX;
-    const y = sourcePoint.y * state.scaleY;
-    const index = state.frames.findIndex((frame) => x >= frame.x && x <= frame.x + frame.w && y >= frame.y && y <= frame.y + frame.h);
-    if (index >= 0) {
-      state.selectedIndex = index;
-      renderAll();
-      const card = els.framesGrid.querySelector(`[data-index="${index}"]`);
-      card?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+    const point = getOriginalCanvasPoint(event);
+    if (state.frameAddMode) {
+      els.sourceCanvas.setPointerCapture?.(event.pointerId);
+      state.cropInteraction = {
+        type: "add",
+        pointerId: event.pointerId,
+        start: point,
+        previousSnapshot: createFrameSnapshot()
+      };
+      state.draftFrame = { x: point.x, y: point.y, w: 0, h: 0 };
+      els.canvasShell.classList.add("is-editing-frame");
+      drawSourceOverlay();
+      return;
     }
+
+    const tolerance = getCanvasHandleTolerance();
+    const activeFrame = state.frames[state.selectedIndex];
+    let handle = activeFrame ? hitTestFrameHandle(activeFrame, point, tolerance) : "";
+    let index = handle ? state.selectedIndex : hitTestFrame(point);
+    if (index < 0) {
+      els.sourceCanvas.style.cursor = "crosshair";
+      return;
+    }
+    if (index !== state.selectedIndex) {
+      state.selectedIndex = index;
+      handle = "";
+      renderAll();
+      els.framesGrid.querySelector(`[data-index="${index}"]`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    const frame = state.frames[index];
+    els.sourceCanvas.setPointerCapture?.(event.pointerId);
+    state.cropInteraction = {
+      type: handle ? "resize" : "move",
+      handle,
+      index,
+      pointerId: event.pointerId,
+      start: point,
+      original: cloneFrame(frame),
+      previousSnapshot: createFrameSnapshot(),
+      changed: false
+    };
+    els.canvasShell.classList.add("is-editing-frame");
+    updateCanvasCursor(event);
+  }
+
+  function updateCropInteraction(event) {
+    const interaction = state.cropInteraction;
+    if (!interaction) {
+      updateCanvasCursor(event);
+      return;
+    }
+    if (interaction.pointerId !== undefined && event.pointerId !== interaction.pointerId) return;
+    event.preventDefault();
+    const point = getOriginalCanvasPoint(event);
+    if (interaction.type === "add") {
+      state.draftFrame = frameFromPoints(interaction.start, point);
+      drawSourceOverlay();
+      return;
+    }
+
+    const frame = state.frames[interaction.index];
+    if (!frame) return;
+    let nextFrame;
+    if (interaction.type === "move") {
+      const deltaX = point.x - interaction.start.x;
+      const deltaY = point.y - interaction.start.y;
+      nextFrame = {
+        ...interaction.original,
+        x: clamp(Math.round(interaction.original.x + deltaX), 0, state.image.naturalWidth - interaction.original.w),
+        y: clamp(Math.round(interaction.original.y + deltaY), 0, state.image.naturalHeight - interaction.original.h)
+      };
+    } else {
+      nextFrame = resizeFrameFromPointer(
+        interaction.original,
+        interaction.handle,
+        point,
+        state.image.naturalWidth,
+        state.image.naturalHeight
+      );
+    }
+    Object.assign(frame, nextFrame);
+    interaction.changed = ["x", "y", "w", "h"].some((key) => frame[key] !== interaction.original[key]);
+    renderFrameEditor();
+    drawSourceOverlay();
+  }
+
+  function finishCropInteraction(event) {
+    const interaction = state.cropInteraction;
+    if (!interaction) return;
+    if (interaction.pointerId !== undefined && event?.pointerId !== undefined && event.pointerId !== interaction.pointerId) return;
+    els.sourceCanvas.releasePointerCapture?.(interaction.pointerId);
+    state.cropInteraction = null;
+    els.canvasShell.classList.remove("is-editing-frame");
+
+    if (interaction.type === "add") {
+      const draft = state.draftFrame;
+      state.draftFrame = null;
+      if (!draft || draft.w < 8 || draft.h < 8) {
+        drawSourceOverlay();
+        showToast("画格太小，请拖出更大的裁切范围");
+        return;
+      }
+      const job = getActiveJob();
+      const frame = {
+        ...draft,
+        id: `${job.id}-manual-${Date.now()}`,
+        checked: true,
+        previewRotation: defaultPreviewRotation(draft),
+        fineRotation: 0
+      };
+      state.frames.push(frame);
+      state.frames.sort((left, right) => (left.x - right.x) || (left.y - right.y));
+      state.selectedIndex = state.frames.findIndex((candidate) => candidate.id === frame.id);
+      commitFrameHistory(interaction.previousSnapshot);
+      setFrameAddMode(false);
+      renderAll();
+      showToast("已补充画格，可继续拖动或缩放校正");
+      return;
+    }
+
+    if (interaction.changed) commitFrameHistory(interaction.previousSnapshot);
+    renderAll();
+  }
+
+  function cancelCropInteraction() {
+    const interaction = state.cropInteraction;
+    if (!interaction) return;
+    if (interaction.type !== "add" && state.frames[interaction.index]) {
+      Object.assign(state.frames[interaction.index], interaction.original);
+    }
+    els.sourceCanvas.releasePointerCapture?.(interaction.pointerId);
+    state.cropInteraction = null;
+    state.draftFrame = null;
+    els.canvasShell.classList.remove("is-editing-frame");
+    renderAll();
+  }
+
+  function updateCanvasCursor(event) {
+    if (!state.analysis || state.busy) return;
+    if (state.frameAddMode || state.baseSamplingActive) {
+      els.sourceCanvas.style.cursor = "crosshair";
+      return;
+    }
+    const interaction = state.cropInteraction;
+    const point = event?.clientX === undefined ? null : getOriginalCanvasPoint(event);
+    const handle = interaction?.handle
+      || (point && state.frames[state.selectedIndex]
+        ? hitTestFrameHandle(state.frames[state.selectedIndex], point, getCanvasHandleTolerance())
+        : "");
+    const cursors = {
+      n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize",
+      ne: "nesw-resize", sw: "nesw-resize", nw: "nwse-resize", se: "nwse-resize"
+    };
+    els.sourceCanvas.style.cursor = cursors[handle]
+      || (interaction?.type === "move" || (point && hitTestFrame(point) >= 0) ? "move" : "crosshair");
+  }
+
+  function setFrameAddMode(enabled) {
+    state.frameAddMode = Boolean(enabled && state.image && !state.busy);
+    if (state.frameAddMode && state.baseSamplingActive) stopFilmBaseSampling();
+    state.draftFrame = null;
+    els.canvasShell.classList.toggle("is-adding-frame", state.frameAddMode);
+    els.addFrameButton.classList.toggle("is-active", state.frameAddMode);
+    els.addFrameButton.setAttribute("aria-pressed", String(state.frameAddMode));
+    els.addFrameButton.textContent = state.frameAddMode ? "取消手动添加" : "手动添加画格";
+    updateCanvasCursor();
+    drawSourceOverlay();
+  }
+
+  function duplicateSelectedFrame() {
+    const frame = state.frames[state.selectedIndex];
+    const job = getActiveJob();
+    if (!frame || !job || state.busy) return;
+    const previousSnapshot = createFrameSnapshot();
+    const offset = Math.max(8, Math.round(Math.min(frame.w, frame.h) * .05));
+    let x = clamp(frame.x + offset, 0, state.image.naturalWidth - frame.w);
+    let y = clamp(frame.y + offset, 0, state.image.naturalHeight - frame.h);
+    if (x === frame.x) x = clamp(frame.x - offset, 0, state.image.naturalWidth - frame.w);
+    if (y === frame.y) y = clamp(frame.y - offset, 0, state.image.naturalHeight - frame.h);
+    const duplicate = {
+      ...cloneFrame(frame),
+      id: `${job.id}-copy-${Date.now()}`,
+      x,
+      y,
+      checked: true
+    };
+    state.frames.push(duplicate);
+    state.frames.sort((left, right) => (left.x - right.x) || (left.y - right.y));
+    state.selectedIndex = state.frames.findIndex((candidate) => candidate.id === duplicate.id);
+    commitFrameHistory(previousSnapshot);
+    renderAll();
+    showToast("已复制裁框，请拖动到漏检画格");
+  }
+
+  function nudgeSelectedFrame(key, amount) {
+    const frame = state.frames[state.selectedIndex];
+    if (!frame || !state.image || state.busy) return;
+    const previousSnapshot = createFrameSnapshot();
+    const deltaX = key === "ArrowLeft" ? -amount : (key === "ArrowRight" ? amount : 0);
+    const deltaY = key === "ArrowUp" ? -amount : (key === "ArrowDown" ? amount : 0);
+    const nextX = clamp(frame.x + deltaX, 0, state.image.naturalWidth - frame.w);
+    const nextY = clamp(frame.y + deltaY, 0, state.image.naturalHeight - frame.h);
+    if (nextX === frame.x && nextY === frame.y) return;
+    frame.x = nextX;
+    frame.y = nextY;
+    commitFrameHistory(previousSnapshot);
+    renderAll();
   }
 
   function getSourceCanvasPoint(event) {
@@ -1647,6 +2079,7 @@
       els.sourceMode.value = "negative";
       job.options.sourceMode = "negative";
     }
+    if (state.frameAddMode) setFrameAddMode(false);
     state.baseSamplingActive = true;
     els.canvasShell.classList.add("is-base-sampling");
     updateFilmBaseUi(job);
@@ -1706,11 +2139,30 @@
   function updateSelectedCrop() {
     const frame = state.frames[state.selectedIndex];
     if (!frame || !state.image) return;
+    const previousSnapshot = createFrameSnapshot();
     const x = clamp(Math.round(Number(els.cropX.value) || 0), 0, state.image.naturalWidth - 8);
     const y = clamp(Math.round(Number(els.cropY.value) || 0), 0, state.image.naturalHeight - 8);
     const w = clamp(Math.round(Number(els.cropW.value) || 8), 8, state.image.naturalWidth - x);
     const h = clamp(Math.round(Number(els.cropH.value) || 8), 8, state.image.naturalHeight - y);
+    if (frame.x === x && frame.y === y && frame.w === w && frame.h === h) return;
     Object.assign(frame, { x, y, w, h });
+    commitFrameHistory(previousSnapshot);
+    renderAll();
+  }
+
+  function updateSelectedFineRotation() {
+    const frame = state.frames[state.selectedIndex];
+    if (!frame) return;
+    if (state.format?.isTiff) {
+      els.cropAngle.value = "0";
+      showToast("TIFF 为保留原始位深，仅支持 90° 旋转");
+      return;
+    }
+    const fineRotation = normalizeFineRotation(els.cropAngle.value);
+    if (normalizeFineRotation(frame.fineRotation) === fineRotation) return;
+    const previousSnapshot = createFrameSnapshot();
+    frame.fineRotation = fineRotation;
+    commitFrameHistory(previousSnapshot);
     renderAll();
   }
 
@@ -1724,6 +2176,15 @@
 
   function normalizeRotation(rotation) {
     return ((Number(rotation) % 360) + 360) % 360;
+  }
+
+  function normalizeFineRotation(rotation) {
+    return Math.round(clamp(Number(rotation) || 0, -5, 5) * 10) / 10;
+  }
+
+  function formatSignedAngle(rotation) {
+    const normalized = normalizeFineRotation(rotation);
+    return `${normalized > 0 ? "+" : ""}${normalized.toFixed(1)}°`;
   }
 
   function defaultPreviewRotation(frame) {
@@ -1760,6 +2221,26 @@
     }
   }
 
+  function drawFrameImage(ctx, image, frame, rotation = frame.previewRotation) {
+    applyRotationTransform(ctx, rotation, frame.w, frame.h);
+    const fineRotation = normalizeFineRotation(frame.fineRotation);
+    if (fineRotation) {
+      ctx.translate(frame.w / 2, frame.h / 2);
+      ctx.rotate(fineRotation * Math.PI / 180);
+      ctx.drawImage(
+        image,
+        frame.x, frame.y, frame.w, frame.h,
+        -frame.w / 2, -frame.h / 2, frame.w, frame.h
+      );
+      return;
+    }
+    ctx.drawImage(
+      image,
+      frame.x, frame.y, frame.w, frame.h,
+      0, 0, frame.w, frame.h
+    );
+  }
+
   function mapRotatedPointToSource(x, y, rotation, width, height) {
     let sourceX = x;
     let sourceY = y;
@@ -1787,8 +2268,10 @@
 
   function removeSelectedFrame() {
     if (state.selectedIndex < 0) return;
+    const previousSnapshot = createFrameSnapshot();
     state.frames.splice(state.selectedIndex, 1);
     state.selectedIndex = Math.min(state.selectedIndex, state.frames.length - 1);
+    commitFrameHistory(previousSnapshot);
     renderAll();
     showToast("已从导出列表排除此画格");
   }
@@ -2307,6 +2790,11 @@
 
   function cropToBlob(frame, format, quality) {
     if (format.isTiff) {
+      if (normalizeFineRotation(frame.fineRotation)) {
+        const error = new Error("Arbitrary TIFF rotation would require resampling");
+        error.userMessage = "TIFF 小角度校正需要重采样，会破坏当前 8/16-bit 无损路径；请将微调角度恢复为 0°。";
+        return Promise.reject(error);
+      }
       if (!state.tiffSource) return Promise.reject(new Error("TIFF source samples are unavailable"));
       const tiff = encodePreservedTiffCrop(state.tiffSource, frame);
       return Promise.resolve(new Blob([tiff], { type: "image/tiff" }));
@@ -2323,8 +2811,7 @@
       ctx.fillRect(0, 0, outputSize.width, outputSize.height);
     }
     ctx.save();
-    applyRotationTransform(ctx, rotation, frame.w, frame.h);
-    ctx.drawImage(state.image, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h);
+    drawFrameImage(ctx, state.image, frame, rotation);
     ctx.restore();
 
     if (format.isBmp) return Promise.resolve(encodeBmpCanvas(canvas));
@@ -2355,6 +2842,7 @@
     els.canvasMessage.hidden = !busy && Boolean(state.analysis);
     if (busy && message) els.canvasMessage.textContent = message;
     updateExportState();
+    updateFrameHistoryButtons();
   }
 
   function setDetectionStatus(type, title, detail) {

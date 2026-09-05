@@ -5,12 +5,14 @@ const vm = require("node:vm");
 const appSource = fs.readFileSync(require("node:path").join(__dirname, "..", "app.js"), "utf8");
 const instrumented = appSource.replace(
   /\n  bindEvents\(\);\n\}\)\(\);\s*$/,
-  "\n  globalThis.__filmFrameTest = { runDetection, state, getFileFormat, defaultPreviewRotation, getRotatedSize, getFrameOutputSize, mapRotatedPointToSource, cropToBlob, encodePreservedTiffCrop, getWritableExportDirectory, saveFilesToDirectory, addFileNameSuffix, getSelectedExportJobs, getManualFilmBase };\n})();"
+  "\n  globalThis.__filmFrameTest = { runDetection, state, getFileFormat, defaultPreviewRotation, getRotatedSize, getFrameOutputSize, mapRotatedPointToSource, resizeFrameFromPointer, normalizeFineRotation, cropToBlob, encodePreservedTiffCrop, getWritableExportDirectory, saveFilesToDirectory, addFileNameSuffix, getSelectedExportJobs, getManualFilmBase };\n})();"
 );
 
 const elementStub = {
   addEventListener() {},
   classList: { add() {}, remove() {}, toggle() {} },
+  dataset: {},
+  focus() {},
   querySelector() { return elementStub; },
   value: "",
   hidden: false,
@@ -81,6 +83,8 @@ const {
   getRotatedSize,
   getFrameOutputSize,
   mapRotatedPointToSource,
+  resizeFrameFromPointer,
+  normalizeFineRotation,
   cropToBlob,
   encodePreservedTiffCrop,
   getWritableExportDirectory,
@@ -509,6 +513,28 @@ async function main() {
   assert.deepEqual(exportRecord.translations[0], [180, 0], "rotated export should apply a quarter-turn transform");
   assert.equal(exportedBlob.type, "image/png", "rotated export should preserve the selected file format");
 
+  const fineRotatedBlob = await cropToBlob(
+    { x: 0, y: 0, w: 120, h: 180, previewRotation: 0, fineRotation: 1.5 },
+    { mime: "image/png" },
+    1
+  );
+  const fineRotationRecord = canvasRecords[canvasRecords.length - 1];
+  assert.ok(Math.abs(fineRotationRecord.rotations[0] - (1.5 * Math.PI / 180)) < 1e-8, "fine rotation should be applied to export pixels");
+  assert.equal(fineRotatedBlob.type, "image/png", "fine rotation should preserve the output format");
+  assert.equal(normalizeFineRotation(8.2), 5, "fine rotation should stay within the safe adjustment range");
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(resizeFrameFromPointer(
+      { x: 10, y: 20, w: 100, h: 80 },
+      "se",
+      { x: 150, y: 130 },
+      200,
+      160
+    ))),
+    { x: 10, y: 20, w: 140, h: 110 },
+    "dragging a corner handle should resize both frame edges"
+  );
+
   assert.equal(getFileFormat({ name: "SCAN.BMP", type: "" }).mime, "image/bmp", "BMP should work without browser MIME data");
   assert.equal(getFileFormat({ name: "scan.bmp", type: "image/x-ms-bmp" }).ext, "bmp", "legacy BMP MIME data should be accepted");
   const bmpBlob = await cropToBlob(
@@ -665,7 +691,7 @@ async function main() {
   console.log("Borderless pair: 2 strips / 2 edge frames — OK");
   console.log("Shared rail: inferred left boundary / 2 strips / 2 frames — OK");
   console.log("Negative: automatic bright-base and orange-mask sampling — OK");
-  console.log("Rotation: flicker-free preview geometry and rotated export — OK");
+  console.log("Crop editor: handle resize, fine rotation and export naming — OK");
   console.log("BMP: import detection and lossless 24-bit rotated export — OK");
   console.log("Batch save: picker opens at remembered directory / collision-safe files — OK");
   console.log("TIFF: 16-bit samples, rotation and metadata preservation — OK");

@@ -1,0 +1,36 @@
+# Dependencies installed locally
+/node_modules/
+/stats-worker/node_modules/
+
+# IDE and operating-system metadata
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local secrets and environment overrides
+.env
+.env.local
+.env.*.local
+/stats-worker/.dev.vars
+
+# Generated, temporary, and test output
+/dist/
+/build/
+/coverage/
+/.nyc_output/
+/.cache/
+/.tmp/
+/tmp/
+/temp/
+*.log
+*.tmp
+*.temp
+*.sqlite
+*.sqlite3
+*.db
+
+# Keep these runtime assets tracked:
+# /image/
+# /image-manifest.js
