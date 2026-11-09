@@ -866,10 +866,14 @@
       const dividerProfile = getStripDividerProfile(context.mask, context.width, context.height, strip, orientation);
       const edgeProfile = getStripDividerProfile(context.foregroundMask, context.width, context.height, strip, orientation);
       const smoothSize = Math.max(1, Math.round(alongLength * 0.001));
-      const dividerRuns = findRuns(
+      const coarseDividerRuns = findRuns(
         smoothProfile(dividerProfile, smoothSize),
         Math.max(0.54, context.options.coverage - (strip.source !== "rails" ? 0.06 : 0)),
         Math.max(2, Math.round(alongLength * 0.002))
+      );
+      const dividerRuns = mergeDividerRuns(
+        coarseDividerRuns,
+        findThinDividerRuns(dividerProfile, alongLength)
       );
       const intervals = gapsBetweenRuns(dividerRuns, alongLength, strip.end - strip.start);
       let stripFrameCount = 0;
@@ -890,7 +894,7 @@
       stripFrameCounts.push(stripFrameCount);
     }
 
-    const cleanFrames = dedupeAndSort(frames);
+    const cleanFrames = normalizeFrameGrid(dedupeAndSort(frames), orientation, context);
     const activeStrips = strips.filter((strip, index) => stripFrameCounts[index] > 0);
     const activeStripFrameCounts = stripFrameCounts.filter((count) => count > 0);
     const averageStripWidth = activeStrips.length
@@ -988,6 +992,51 @@
       }
     }
     return mergeNearbyRuns(runs, Math.max(2, minLength));
+  }
+
+  // 高分辨率扫描图里画格之间的分隔常常只有 1–3 个分析像素宽。常规检测的
+  // 平滑半径和最小长度会把这类窄分隔抹掉，造成漏帧、画格尺寸不一致。
+  // 这里用弱平滑 + 高黑边覆盖率 + 窄宽度限制再找一次，作为常规检测的补充。
+  function findThinDividerRuns(profile, alongLength) {
+    const smoothed = smoothProfile(profile, 1);
+    const threshold = 0.8;
+    const maxLength = Math.max(3, Math.round(alongLength * 0.006));
+    const sideWidth = Math.max(2, Math.round(alongLength * 0.002));
+    const runs = [];
+    let start = -1;
+    let peak = 0;
+
+    for (let i = 0; i <= smoothed.length; i += 1) {
+      const value = i < smoothed.length ? smoothed[i] : 0;
+      if (value >= threshold) {
+        if (start < 0) { start = i; peak = value; }
+        else peak = Math.max(peak, value);
+      } else if (start >= 0) {
+        const length = i - start;
+        if (length <= maxLength && isIsolatedDivider(smoothed, start, i, sideWidth)) {
+          runs.push({ start, end: i, peak, mean: peak });
+        }
+        start = -1;
+      }
+    }
+    return runs;
+  }
+
+  // 分隔两侧应当是明显更亮的画面内容，避免把照片内部的暗部当成分隔线。
+  function isIsolatedDivider(profile, start, end, sideWidth) {
+    if (start < sideWidth || end + sideWidth > profile.length) return false;
+    const left = profileWindowMean(profile, start - sideWidth, sideWidth, 1);
+    const right = profileWindowMean(profile, end, sideWidth, 1);
+    return Math.max(left, right) < 0.6;
+  }
+
+  function mergeDividerRuns(primary, extra) {
+    const merged = primary.map((run) => ({ ...run }));
+    for (const run of extra) {
+      const overlaps = merged.some((other) => run.start <= other.end + 2 && run.end >= other.start - 2);
+      if (!overlaps) merged.push({ ...run });
+    }
+    return merged.sort((a, b) => a.start - b.start);
   }
 
   function mergeNearbyRuns(runs, maxGap) {
@@ -1300,6 +1349,160 @@
       + Math.min(9, result.layoutStrength * 1.6)
       + balance * 4
       + areaScore;
+  }
+
+  // 同一条片轨上的画格在物理上尺寸相同。检测边界会受缩略图分辨率和收边设置
+  // 影响产生 1–2% 抖动，这里按片轨把画格尺寸统一到中位数，使同一条底片导出
+  // 的画格尺寸完全一致；贴住图像边缘的画格只有紧邻暗区时才向外补齐标准尺寸，
+  // 紧邻白色留白时保持原样，避免把纸张边缘裁进画格。
+  function normalizeFrameGrid(frames, orientation, context) {
+    if (frames.length < 3) return frames;
+    const vertical = orientation === "vertical";
+    const crossKey = vertical ? "x" : "y";
+    const crossSizeKey = vertical ? "w" : "h";
+    const alongKey = vertical ? "y" : "x";
+    const alongSizeKey = vertical ? "h" : "w";
+    const alongLimit = vertical ? context.height : context.width;
+    const crossLimit = vertical ? context.width : context.height;
+
+    const groups = [];
+    for (const frame of [...frames].sort((a, b) => a[crossKey] - b[crossKey])) {
+      const start = frame[crossKey];
+      const end = start + frame[crossSizeKey];
+      const group = groups.find((item) => {
+        const overlap = Math.max(0, Math.min(end, item.end) - Math.max(start, item.start));
+        return overlap / Math.max(1, Math.min(end - start, item.end - item.start)) > 0.6;
+      });
+      if (group) {
+        group.frames.push(frame);
+        group.start = Math.min(group.start, start);
+        group.end = Math.max(group.end, end);
+      } else {
+        groups.push({ start, end, frames: [frame] });
+      }
+    }
+
+    const result = [];
+    for (const group of groups) {
+      const interior = group.frames
+        .filter((frame) => frame[alongKey] > 0 && frame[alongKey] + frame[alongSizeKey] < alongLimit)
+        .sort((a, b) => a[alongKey] - b[alongKey]);
+      if (group.frames.length < 3 || interior.length < 2) {
+        result.push(...group.frames);
+        continue;
+      }
+
+      const sizes = interior.map((frame) => frame[alongSizeKey]);
+      const medianSize = medianValue(sizes);
+      const stable = sizes.filter((size) => Math.abs(size - medianSize) <= medianSize * 0.06);
+      if (stable.length < 2) {
+        result.push(...group.frames);
+        continue;
+      }
+
+      const targetSize = Math.round(medianValue(stable));
+      const crossStart = Math.round(medianValue(group.frames.map((frame) => frame[crossKey])));
+      const crossEnd = Math.round(
+        medianValue(group.frames.map((frame) => frame[crossKey] + frame[crossSizeKey]))
+      );
+      const crossDeviation = Math.max(
+        ...group.frames.map((frame) =>
+          Math.abs(frame[crossSizeKey] - (crossEnd - crossStart)) / Math.max(1, crossEnd - crossStart)
+        )
+      );
+      const targetCrossSize = crossDeviation <= 0.03
+        ? Math.max(1, Math.min(crossEnd - crossStart, crossLimit - crossStart))
+        : null;
+
+      const adjustedFrames = new Map();
+      for (let index = 0; index < interior.length; index += 1) {
+        const frame = interior[index];
+        let end = frame[alongKey] + targetSize;
+        const next = interior[index + 1];
+        if (next) end = Math.min(end, next[alongKey]);
+        end = Math.min(end, alongLimit);
+        const start = Math.round(frame[alongKey]);
+        const adjusted = { ...frame, [alongKey]: start, [alongSizeKey]: Math.max(1, Math.round(end) - start) };
+        if (targetCrossSize) {
+          adjusted[crossKey] = crossStart;
+          adjusted[crossSizeKey] = targetCrossSize;
+        }
+        adjustedFrames.set(frame, adjusted);
+      }
+
+      // 片头/片尾画格缺少一侧分隔线时会被裁窄（例如首格 2412 而非 2648）。
+      // 若缺失方向紧邻的是片基暗区，则扩展到标准尺寸；若紧邻白色留白则保持原样。
+      const ordered = [...group.frames].sort((a, b) => a[alongKey] - b[alongKey]);
+      expandEdgeFrame(ordered[0], "start");
+      expandEdgeFrame(ordered[ordered.length - 1], "end");
+
+      function expandEdgeFrame(frame, side) {
+        const current = adjustedFrames.get(frame) || { ...frame };
+        const size = current[alongSizeKey];
+        if (size >= targetSize) return;
+        if (side === "start") {
+          const end = Math.round(current[alongKey] + size);
+          const start = end - targetSize;
+          if (start < 0 || start >= current[alongKey]) return;
+          if (!isExpandableRegion(context, orientation, start, current[alongKey], crossStart, crossEnd)) return;
+          current[alongKey] = start;
+          current[alongSizeKey] = Math.max(1, end - start);
+        } else {
+          const start = Math.round(current[alongKey]);
+          const end = start + targetSize;
+          if (end > alongLimit || end <= start + size) return;
+          if (!isExpandableRegion(context, orientation, start + size, end, crossStart, crossEnd)) return;
+          current[alongKey] = start;
+          current[alongSizeKey] = Math.max(1, end - start);
+        }
+        if (targetCrossSize) {
+          current[crossKey] = crossStart;
+          current[crossSizeKey] = targetCrossSize;
+        }
+        adjustedFrames.set(frame, current);
+      }
+
+      for (const frame of group.frames) {
+        result.push(adjustedFrames.get(frame) || frame);
+      }
+    }
+    return dedupeAndSort(result);
+  }
+
+  // 判断贴边画格向外扩展的区域能否安全纳入：必须足够暗（暗部画面或片基），
+  // 而不是白色留白/纸边，避免把纸张边缘当成画面裁进画格。
+  function isExpandableRegion(context, orientation, alongStart, alongEnd, crossStart, crossEnd) {
+    const vertical = orientation === "vertical";
+    const xStart = Math.max(0, Math.round(vertical ? crossStart : alongStart));
+    const xEnd = Math.min(context.width, Math.round(vertical ? crossEnd : alongEnd));
+    const yStart = Math.max(0, Math.round(vertical ? alongStart : crossStart));
+    const yEnd = Math.min(context.height, Math.round(vertical ? alongEnd : crossEnd));
+    if (xEnd <= xStart || yEnd <= yStart) return false;
+    const data = context.imageData.data;
+    const stepX = Math.max(1, Math.floor((xEnd - xStart) / 120));
+    const stepY = Math.max(1, Math.floor((yEnd - yStart) / 120));
+    let total = 0;
+    let sum = 0;
+    let white = 0;
+    for (let y = yStart; y < yEnd; y += stepY) {
+      const row = y * context.width;
+      for (let x = xStart; x < xEnd; x += stepX) {
+        const offset = (row + x) * 4;
+        const luminance = data[offset] * 0.2126 + data[offset + 1] * 0.7152 + data[offset + 2] * 0.0722;
+        total += 1;
+        sum += luminance;
+        if (luminance > 200) white += 1;
+      }
+    }
+    if (!total) return false;
+    return sum / total <= 70 && white / total <= 0.15;
+  }
+
+  function medianValue(values) {
+    if (!values.length) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
   }
 
   function dedupeAndSort(frames) {
